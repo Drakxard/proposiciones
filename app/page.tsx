@@ -805,6 +805,21 @@ export default function PropositionsApp() {
     }))
   }
 
+  const openSubtopicDetail = (subtopicId: string) => {
+    if (!currentThemeId) return
+
+    const theme = themes.find((t) => t.id === currentThemeId)
+    const hasSubtopic = theme?.subtopics.some((subtopic) => subtopic.id === subtopicId)
+
+    if (!hasSubtopic) {
+      return
+    }
+
+    setCurrentSubtopicId(subtopicId)
+    setCurrentIndex(0)
+    setViewState("overview")
+  }
+
   const evaluatePropositions = async (subtopicId: string) => {
     if (!currentThemeId) return
 
@@ -819,8 +834,7 @@ export default function PropositionsApp() {
       console.log("[v0] Propositions already exist, going to interface")
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
-      setViewState("recording")
-      setCountdown(5)
+      setViewState("overview")
       return
     }
 
@@ -873,8 +887,7 @@ export default function PropositionsApp() {
 
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
-      setViewState("recording")
-      setCountdown(5)
+      setViewState("overview")
     } catch (error) {
       console.error("[v0] Error generating propositions:", error)
       alert("Error al generar proposiciones. Por favor, intenta de nuevo.")
@@ -1002,6 +1015,10 @@ export default function PropositionsApp() {
   }
 
   const goToProposition = (index: number) => {
+    if (!propositions[index]) {
+      return
+    }
+
     setCurrentIndex(index)
     setViewState("recording")
     setCountdown(5)
@@ -1147,11 +1164,19 @@ export default function PropositionsApp() {
                     className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                   <Button
-                    onClick={() => evaluatePropositions(subtopic.id)}
+                    onClick={() =>
+                      subtopic.propositions
+                        ? openSubtopicDetail(subtopic.id)
+                        : evaluatePropositions(subtopic.id)
+                    }
                     disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
                     className="whitespace-nowrap"
                   >
-                    {isGenerating ? "Generando..." : subtopic.propositions ? "Acceder" : "Evaluar proposiciones"}
+                    {isGenerating
+                      ? "Generando..."
+                      : subtopic.propositions
+                        ? "Ver subtema"
+                        : "Generar proposiciones"}
                   </Button>
                 </div>
               ))}
@@ -1185,9 +1210,22 @@ export default function PropositionsApp() {
   }
 
   if (viewState === "overview") {
+    if (!currentTheme || !currentSubtopic) {
+      return null
+    }
+
     return (
       <div className="min-h-screen bg-background p-8">
         <div className="fixed top-4 left-4 flex gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setViewState("subtopics")}
+            className="hover:bg-primary/10"
+            title="Volver a subtemas"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -1199,47 +1237,83 @@ export default function PropositionsApp() {
           </Button>
         </div>
 
-        <div className="max-w-4xl mx-auto space-y-6">
-          <h1 className="text-3xl font-bold text-center mb-8 text-balance">Evaluación de Proposiciones</h1>
+        <div className="max-w-4xl mx-auto space-y-8">
+          <div className="text-center space-y-2">
+            <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              {currentTheme.name}
+            </p>
+            <h1 className="text-3xl font-bold text-balance">Proposiciones del subtema</h1>
+          </div>
 
-          <Card className="p-8 space-y-6">
-            {propositions.map((prop, index) => (
-              <div
-                key={prop.id}
-                className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
-              >
-                <div className="flex-1 space-y-2">
-                  <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                    {prop.label}
-                  </p>
-                  <div className="text-lg leading-relaxed text-foreground break-words">
-                    <MathText text={prop.text} />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {prop.audios.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => playRecordedAudio(index)}
-                      className="hover:bg-primary/10"
-                      title="Reproducir último audio"
-                    >
-                      <Play className="w-5 h-5" />
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => goToProposition(index)}
-                    className="hover:bg-primary/10"
-                  >
-                    <Headphones className="w-5 h-5" />
-                  </Button>
-                </div>
+          <Card className="p-6">
+            <div className="space-y-2 text-center">
+              <p className="text-sm text-muted-foreground uppercase tracking-wide">Subtema seleccionado</p>
+              <div className="text-xl leading-relaxed text-foreground break-words">
+                <MathText text={currentSubtopic.text} />
               </div>
-            ))}
+            </div>
           </Card>
+
+          {propositions.length === 0 ? (
+            <Card className="p-8 space-y-4 text-center">
+              <p className="text-muted-foreground">
+                Este subtema aún no tiene proposiciones generadas.
+              </p>
+              <Button
+                onClick={() => evaluatePropositions(currentSubtopic.id)}
+                disabled={isGenerating || !currentSubtopic.text.trim()}
+              >
+                {isGenerating ? "Generando..." : "Generar proposiciones"}
+              </Button>
+            </Card>
+          ) : (
+            <>
+              <Card className="p-8 space-y-6">
+                {propositions.map((prop, index) => (
+                  <div
+                    key={prop.id}
+                    className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex-1 space-y-2">
+                      <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                        {prop.label}
+                      </p>
+                      <div className="text-lg leading-relaxed text-foreground break-words">
+                        <MathText text={prop.text} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {prop.audios.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => playRecordedAudio(index)}
+                          className="hover:bg-primary/10"
+                          title="Reproducir último audio"
+                        >
+                          <Play className="w-5 h-5" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => goToProposition(index)}
+                        className="hover:bg-primary/10"
+                        title="Practicar esta proposición"
+                      >
+                        <Headphones className="w-5 h-5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </Card>
+              <div className="flex justify-center">
+                <Button size="lg" onClick={() => goToProposition(0)}>
+                  Iniciar práctica guiada
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     )
@@ -1255,7 +1329,7 @@ export default function PropositionsApp() {
           size="icon"
           onClick={() => setViewState("overview")}
           className="hover:bg-primary/10"
-          title="Volver a vista general"
+          title="Volver al subtema"
         >
           <ArrowLeft className="w-6 h-6" />
         </Button>
