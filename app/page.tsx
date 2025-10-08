@@ -686,6 +686,71 @@ export default function PropositionsApp() {
     setViewState("subtopics")
   }
 
+  const extractTextFromEntry = (entry: any): string => {
+    if (typeof entry === "string") {
+      return entry.trim()
+    }
+
+    if (typeof entry === "number") {
+      return entry.toString()
+    }
+
+    if (entry && typeof entry === "object") {
+      const candidateKeys = [
+        "texto",
+        "text",
+        "subtema",
+        "subtopic",
+        "nombre",
+        "name",
+        "titulo",
+        "title",
+        "condicion",
+        "proposicion",
+        "proposition",
+      ]
+
+      for (const key of candidateKeys) {
+        const value = entry[key]
+        if (typeof value === "string" && value.trim().length > 0) {
+          return value.trim()
+        }
+      }
+    }
+
+    return ""
+  }
+
+  const normalizePropositionType = (value: any): PropositionKind | undefined => {
+    if (typeof value !== "string") {
+      return undefined
+    }
+
+    const normalized = value.trim().toLowerCase()
+
+    switch (normalized) {
+      case "condicion":
+        return "condicion"
+      case "reciproco":
+        return "reciproco"
+      case "inverso":
+        return "inverso"
+      case "contrareciproco":
+        return "contrareciproco"
+      case "custom":
+        return "custom"
+      default:
+        return undefined
+    }
+  }
+
+  const getLabelForCondicion = (index: number) => {
+    if (index === 0) {
+      return propositionTypeLabels.condicion
+    }
+    return `${propositionTypeLabels.condicion} ${index + 1}`
+  }
+
   const importSubtopicFromClipboard = async () => {
     if (!currentThemeId) return
 
@@ -727,28 +792,31 @@ export default function PropositionsApp() {
 
       const [subtopicInfo, ...propositionEntries] = parsed
 
-      if (!subtopicInfo || typeof subtopicInfo.texto !== "string") {
-        throw new Error("El primer elemento debe incluir la propiedad 'texto'")
+      const subtopicText = extractTextFromEntry(subtopicInfo)
+
+      if (!subtopicText) {
+        throw new Error("El primer elemento debe incluir el texto del subtema")
       }
 
       const newSubtopicId = `subtopic-${Date.now()}`
 
       const propositions: Proposition[] | null = propositionEntries.length
         ? propositionEntries.map((entry: any, index: number) => {
-            const rawText =
-              typeof entry === "string"
-                ? entry
-                : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
-            const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
+            const textValue = extractTextFromEntry(entry)
+            if (!textValue) {
+              return null
+            }
 
-            const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
+            const incomingType = normalizePropositionType(entry?.tipo)
+            const baseType = incomingType || "condicion"
             const label =
-              typeof entry?.etiqueta === "string"
-                ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
-                  : getLabelForProposition(baseType, index)
+              typeof entry?.etiqueta === "string" && entry.etiqueta.trim().length > 0
+                ? entry.etiqueta.trim()
+                : baseType === "condicion"
+                  ? getLabelForCondicion(index)
+                  : baseType !== "custom" && propositionTypeLabels[baseType as PropositionType]
+                    ? propositionTypeLabels[baseType as PropositionType]
+                    : `Proposición ${index + 1}`
 
             return {
               id: `${newSubtopicId}-${index}`,
@@ -758,6 +826,7 @@ export default function PropositionsApp() {
               audios: [],
             }
           })
+            .filter((prop): prop is Proposition => Boolean(prop))
         : null
 
       updateThemeById(currentThemeId, (theme) => ({
@@ -766,7 +835,7 @@ export default function PropositionsApp() {
           ...theme.subtopics,
           {
             id: newSubtopicId,
-            text: subtopicInfo.texto,
+            text: subtopicText,
             propositions,
           },
         ],
