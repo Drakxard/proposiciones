@@ -84,12 +84,10 @@ export async function getSavedDirectoryHandle(): Promise<FileSystemDirectoryHand
       return handle
     }
 
-    // Try to request permission again
-    const newPermission = await handle.requestPermission({ mode: "readwrite" })
-    if (newPermission === "granted") {
-      return handle
-    }
-
+    // Some browsers (Chrome 120+) require a user gesture to call requestPermission.
+    // Invoking it here during app start would trigger a SecurityError and break
+    // the persistence boot process, so we simply return null and let the UI ask
+    // for permission explicitly when the user opts-in to file system storage.
     return null
   } catch (error) {
     console.error("[v0] Error getting saved directory handle:", error)
