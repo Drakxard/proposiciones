@@ -742,7 +742,7 @@ export default function PropositionsApp() {
             const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
 
             const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
+            const baseType = incomingType || "condicion"
             const label =
               typeof entry?.etiqueta === "string"
                 ? entry.etiqueta
