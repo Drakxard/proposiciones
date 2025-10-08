@@ -815,12 +815,11 @@ export default function PropositionsApp() {
     console.log("[v0] Evaluating propositions for subtopic:", subtopic)
     console.log("[v0] Subtopic has propositions?", !!subtopic.propositions)
 
+    setCurrentSubtopicId(subtopicId)
+    setCurrentIndex(0)
+
     if (subtopic.propositions && subtopic.propositions.length > 0) {
-      console.log("[v0] Propositions already exist, going to interface")
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setViewState("recording")
-      setCountdown(5)
+      console.log("[v0] Propositions already exist, staying on subtopics view")
       return
     }
 
@@ -870,11 +869,6 @@ export default function PropositionsApp() {
         ...current,
         propositions: newPropositions,
       }))
-
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setViewState("recording")
-      setCountdown(5)
     } catch (error) {
       console.error("[v0] Error generating propositions:", error)
       alert("Error al generar proposiciones. Por favor, intenta de nuevo.")
@@ -1136,31 +1130,146 @@ export default function PropositionsApp() {
               </Button>
             </Card>
           ) : (
-            <Card className="p-6 space-y-4">
-              {subtopics.map((subtopic) => (
-                <div key={subtopic.id} className="flex items-center gap-4">
-                  <input
-                    type="text"
-                    value={subtopic.text}
-                    onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                    placeholder="Ingresa una condición o teorema..."
-                    className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <Button
-                    onClick={() => evaluatePropositions(subtopic.id)}
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
-                    {isGenerating ? "Generando..." : subtopic.propositions ? "Acceder" : "Evaluar proposiciones"}
-                  </Button>
-                </div>
-              ))}
+            <div className="space-y-4">
+              <Card className="p-6 space-y-4">
+                {subtopics.map((subtopic) => {
+                  const isSelected = currentSubtopicId === subtopic.id
+                  const isProcessingCurrent = isGenerating && isSelected && !subtopic.propositions
 
-              <Button variant="outline" onClick={addSubtopic} className="w-full bg-transparent">
-                <Plus className="w-4 h-4 mr-2" />
-                Agregar subtema manual
-              </Button>
-            </Card>
+                  return (
+                    <div
+                      key={subtopic.id}
+                      onClick={() => setCurrentSubtopicId(subtopic.id)}
+                      className={`flex flex-col gap-4 rounded-lg border p-4 transition-colors md:flex-row md:items-center md:gap-6 ${
+                        isSelected ? "border-primary bg-primary/5" : "border-border"
+                      }`}
+                    >
+                      <input
+                        type="text"
+                        value={subtopic.text}
+                        onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="Ingresa una condición o teorema..."
+                        className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setCurrentSubtopicId(subtopic.id)
+                          }}
+                          disabled={!subtopic.text.trim()}
+                        >
+                          Ver subtema
+                        </Button>
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            evaluatePropositions(subtopic.id)
+                          }}
+                          disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
+                          className="whitespace-nowrap"
+                        >
+                          {isProcessingCurrent
+                            ? "Generando..."
+                            : subtopic.propositions
+                              ? "Ver proposiciones"
+                              : "Evaluar proposiciones"}
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                <Button variant="outline" onClick={addSubtopic} className="w-full bg-transparent">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Agregar subtema manual
+                </Button>
+              </Card>
+
+              <Card className="p-6 space-y-4">
+                {currentSubtopic ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                          Subtema seleccionado
+                        </p>
+                        <p className="text-lg font-medium text-foreground break-words">
+                          {currentSubtopic.text || "Subtema sin título"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => setViewState("overview")}
+                          disabled={!currentSubtopic.propositions?.length}
+                        >
+                          Ver en pantalla completa
+                        </Button>
+                        <Button
+                          onClick={() => goToProposition(0)}
+                          disabled={!currentSubtopic.propositions?.length}
+                        >
+                          Iniciar práctica
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {isGenerating && !currentSubtopic.propositions ? (
+                        <p className="text-muted-foreground">Generando proposiciones...</p>
+                      ) : currentSubtopic.propositions && currentSubtopic.propositions.length > 0 ? (
+                        currentSubtopic.propositions.map((prop, index) => (
+                          <div
+                            key={prop.id}
+                            className="flex flex-col gap-4 rounded-lg border border-border p-4 md:flex-row md:items-start md:justify-between"
+                          >
+                            <div className="space-y-2">
+                              <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                                {prop.label}
+                              </p>
+                              <div className="text-base leading-relaxed text-foreground break-words">
+                                <MathText text={prop.text} />
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {prop.audios.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => playRecordedAudio(index)}
+                                  title="Reproducir último audio"
+                                >
+                                  <Play className="w-5 h-5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => goToProposition(index)}
+                                title="Practicar proposición"
+                              >
+                                <Headphones className="w-5 h-5" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-muted-foreground">
+                          Evalúa el subtema para generar sus proposiciones.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground">
+                    Selecciona un subtema para ver y practicar sus proposiciones.
+                  </p>
+                )}
+              </Card>
+            </div>
           )}
         </div>
 
