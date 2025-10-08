@@ -695,7 +695,31 @@ export default function PropositionsApp() {
       }
 
       const clipboardText = await navigator.clipboard.readText()
-      const parsed = JSON.parse(clipboardText)
+      const normalizedText = clipboardText.trim()
+
+      let parsed: any
+
+      try {
+        parsed = JSON.parse(normalizedText)
+      } catch (initialError: any) {
+        let fallbackText: string | null = null
+
+        if (normalizedText.startsWith("{{") && normalizedText.endsWith("}}")) {
+          fallbackText = `[${normalizedText.slice(1, -1)}]`
+        } else if (normalizedText.startsWith("{") && normalizedText.endsWith("}")) {
+          fallbackText = `[${normalizedText}]`
+        }
+
+        if (fallbackText) {
+          try {
+            parsed = JSON.parse(fallbackText)
+          } catch {
+            throw initialError
+          }
+        } else {
+          throw initialError
+        }
+      }
 
       if (!Array.isArray(parsed) || parsed.length === 0) {
         throw new Error("Formato inválido del portapapeles")
