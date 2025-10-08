@@ -686,6 +686,76 @@ export default function PropositionsApp() {
     setViewState("subtopics")
   }
 
+  const COLLECTION_KEYS = [
+    "proposiciones",
+    "propositions",
+    "condiciones",
+    "conditions",
+    "items",
+    "values",
+    "lista",
+    "list",
+  ] as const
+
+  const extractTextValue = (value: any): string | null => {
+    if (value == null) return null
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      return trimmed.length ? trimmed : null
+    }
+    if (typeof value === "number") {
+      return value.toString()
+    }
+    if (typeof value === "object") {
+      const preferredKeys = [
+        "texto",
+        "text",
+        "value",
+        "label",
+        "nombre",
+        "name",
+        "subtema",
+        "tema",
+        "titulo",
+        "title",
+        "descripcion",
+        "description",
+      ]
+
+      for (const key of preferredKeys) {
+        const candidate = (value as Record<string, unknown>)[key]
+        if (typeof candidate === "string" || typeof candidate === "number") {
+          const normalized = candidate.toString().trim()
+          if (normalized.length) {
+            return normalized
+          }
+        }
+      }
+    }
+    return null
+  }
+
+  const extractTextsFromCollection = (value: any): string[] => {
+    if (value == null) return []
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => extractTextsFromCollection(item))
+    }
+    if (typeof value === "object") {
+      for (const key of COLLECTION_KEYS) {
+        const candidate = (value as Record<string, unknown>)[key]
+        if (Array.isArray(candidate)) {
+          return (candidate as unknown[]).flatMap((item) => extractTextsFromCollection(item))
+        }
+      }
+
+      const directText = extractTextValue(value)
+      return directText ? [directText] : []
+    }
+
+    const directText = extractTextValue(value)
+    return directText ? [directText] : []
+  }
+
   const importSubtopicFromClipboard = async () => {
     if (!currentThemeId) return
 
@@ -727,49 +797,87 @@ export default function PropositionsApp() {
 
       const [subtopicInfo, ...propositionEntries] = parsed
 
-      if (!subtopicInfo || typeof subtopicInfo.texto !== "string") {
-        throw new Error("El primer elemento debe incluir la propiedad 'texto'")
+      const subtopicText = extractTextValue(subtopicInfo)
+      if (!subtopicText) {
+        throw new Error("El primer elemento debe incluir un texto para el subtema")
       }
 
-      const newSubtopicId = `subtopic-${Date.now()}`
+      const hasCollectionInFirstItem =
+        typeof subtopicInfo === "object" &&
+        subtopicInfo !== null &&
+        COLLECTION_KEYS.some((key) => Array.isArray((subtopicInfo as Record<string, unknown>)[key]))
 
-      const propositions: Proposition[] | null = propositionEntries.length
-        ? propositionEntries.map((entry: any, index: number) => {
-            const rawText =
-              typeof entry === "string"
-                ? entry
-                : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
-            const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
+      const propositionEntriesLookLikeLegacy =
+        !hasCollectionInFirstItem &&
+        propositionEntries.length > 0 &&
+        propositionEntries.every(
+          (entry: any) =>
+            entry &&
+            typeof entry === "object" &&
+            ("tipo" in entry || "type" in entry || "etiqueta" in entry || "label" in entry),
+        )
 
-            const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
-            const label =
-              typeof entry?.etiqueta === "string"
-                ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
-                  : getLabelForProposition(baseType, index)
+      if (propositionEntriesLookLikeLegacy) {
+        const newSubtopicId = `subtopic-${Date.now()}`
 
-            return {
-              id: `${newSubtopicId}-${index}`,
-              type: baseType,
-              label,
-              text: textValue,
-              audios: [],
-            }
-          })
-        : null
+        const propositions: Proposition[] = propositionEntries.map((entry: any, index: number) => {
+          const textValue = extractTextValue(entry) ?? ""
+          const incomingType = (entry?.tipo ?? entry?.type) as PropositionKind | undefined
+          const baseType = incomingType || mapIndexToType(index)
+          const incomingLabel = (entry?.etiqueta ?? entry?.label) as string | undefined
+          const label =
+            typeof incomingLabel === "string" && incomingLabel.trim().length
+              ? incomingLabel.trim()
+              : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
+                ? propositionTypeLabels[incomingType as PropositionType]
+                : getLabelForProposition(baseType, index)
+
+          return {
+            id: `${newSubtopicId}-${index}`,
+            type: baseType,
+            label,
+            text: textValue,
+            audios: [],
+          }
+        })
+
+        updateThemeById(currentThemeId, (theme) => ({
+          ...theme,
+          subtopics: [
+            ...theme.subtopics,
+            {
+              id: newSubtopicId,
+              text: subtopicText,
+              propositions,
+            },
+          ],
+        }))
+        return
+      }
+
+      const additionalTextsFromFirst = hasCollectionInFirstItem
+        ? extractTextsFromCollection(subtopicInfo).filter((text) => text !== subtopicText)
+        : []
+      const additionalTexts = propositionEntries.flatMap((entry: any) => extractTextsFromCollection(entry))
+
+      const textsToCreate = [subtopicText, ...additionalTextsFromFirst, ...additionalTexts]
+        .map((text) => text.trim())
+        .filter((text, index, array) => text.length > 0 && array.indexOf(text) === index)
+
+      if (textsToCreate.length === 0) {
+        throw new Error("No se encontraron proposiciones válidas en el portapapeles")
+      }
+
+      const timestamp = Date.now()
+      const newSubtopics: Subtopic[] = textsToCreate.map((text, index) => ({
+        id: `subtopic-${timestamp}-${index}`,
+        text,
+        propositions: null,
+      }))
 
       updateThemeById(currentThemeId, (theme) => ({
         ...theme,
-        subtopics: [
-          ...theme.subtopics,
-          {
-            id: newSubtopicId,
-            text: subtopicInfo.texto,
-            propositions,
-          },
-        ],
+        subtopics: [...theme.subtopics, ...newSubtopics],
       }))
     } catch (error: any) {
       console.error("[v0] Error importing from clipboard:", error)
