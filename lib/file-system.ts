@@ -78,15 +78,12 @@ export async function getSavedDirectoryHandle(): Promise<FileSystemDirectoryHand
       return null
     }
 
-    // Verify we still have permission
+    // Verify we still have permission. Requesting a new permission prompt
+    // requires a user activation (e.g. button click). Since this function is
+    // called automatically during app boot we simply return null when
+    // permission is no longer granted so the UI can prompt the user.
     const permission = await handle.queryPermission({ mode: "readwrite" })
     if (permission === "granted") {
-      return handle
-    }
-
-    // Try to request permission again
-    const newPermission = await handle.requestPermission({ mode: "readwrite" })
-    if (newPermission === "granted") {
       return handle
     }
 
