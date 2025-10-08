@@ -741,14 +741,13 @@ export default function PropositionsApp() {
                 : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
             const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
 
-            const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
+            const baseType: PropositionKind = "condicion"
             const label =
               typeof entry?.etiqueta === "string"
                 ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
-                  : getLabelForProposition(baseType, index)
+                : index === 0
+                  ? propositionTypeLabels.condicion
+                  : `${propositionTypeLabels.condicion} ${index + 1}`
 
             return {
               id: `${newSubtopicId}-${index}`,
