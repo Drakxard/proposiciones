@@ -17,6 +17,24 @@ interface PropositionsDB extends DBSchema {
         | null
     }
   }
+  themes: {
+    key: string
+    value: {
+      id: string
+      name: string
+      subtopics: {
+        id: string
+        text: string
+        propositions:
+          | {
+              id: string
+              text: string
+              audioCount: number
+            }[]
+          | null
+      }[]
+    }
+  }
   audios: {
     key: string // Format: subtopicId-propIndex-audioIndex
     value: {
@@ -42,11 +60,15 @@ let dbPromise: Promise<IDBPDatabase<PropositionsDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<PropositionsDB>("propositions-app", 1, {
+    dbPromise = openDB<PropositionsDB>("propositions-app", 2, {
       upgrade(db) {
         // Create subtopics store
         if (!db.objectStoreNames.contains("subtopics")) {
           db.createObjectStore("subtopics", { keyPath: "id" })
+        }
+
+        if (!db.objectStoreNames.contains("themes")) {
+          db.createObjectStore("themes", { keyPath: "id" })
         }
 
         // Create audios store with index
@@ -81,6 +103,29 @@ export async function saveSubtopics(subtopics: any[]) {
 export async function loadSubtopics() {
   const db = await getDB()
   return await db.getAll("subtopics")
+}
+
+// Themes operations
+export async function saveThemes(themes: any[]) {
+  const db = await getDB()
+  if (!db.objectStoreNames.contains("themes")) {
+    return
+  }
+
+  const tx = db.transaction("themes", "readwrite")
+  await tx.store.clear()
+  for (const theme of themes) {
+    await tx.store.put(theme)
+  }
+  await tx.done
+}
+
+export async function loadThemes() {
+  const db = await getDB()
+  if (!db.objectStoreNames.contains("themes")) {
+    return []
+  }
+  return await db.getAll("themes")
 }
 
 // Audio operations
@@ -136,9 +181,16 @@ export async function loadSettings() {
 // Clear all data
 export async function clearAllData() {
   const db = await getDB()
-  const tx = db.transaction(["subtopics", "audios", "settings"], "readwrite")
+  const stores = ["subtopics", "audios", "settings"]
+  if (db.objectStoreNames.contains("themes")) {
+    stores.push("themes")
+  }
+  const tx = db.transaction(stores, "readwrite")
   await tx.objectStore("subtopics").clear()
   await tx.objectStore("audios").clear()
   await tx.objectStore("settings").clear()
+  if (db.objectStoreNames.contains("themes")) {
+    await tx.objectStore("themes").clear()
+  }
   await tx.done
 }

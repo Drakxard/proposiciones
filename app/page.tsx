@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
+import { MathText } from "@/components/math-text"
 import { generatePropositions } from "./actions"
-import { saveSubtopics, loadSubtopics, saveAudio, loadAudios } from "@/lib/storage"
+import { saveThemes, loadThemes, loadSubtopics, saveAudio, loadAudios } from "@/lib/storage"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -17,10 +18,8 @@ import {
   readBlobFile,
 } from "@/lib/file-system"
 
-type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
-
 interface Proposition {
-  type: PropositionType
+  id: string
   text: string
   audios: Blob[]
 }
@@ -31,26 +30,52 @@ interface Subtopic {
   propositions: Proposition[] | null
 }
 
+interface StoredProposition {
+  id: string
+  text: string
+  audioCount: number
+}
+
 interface SubtopicData {
   id: string
   text: string
-  propositions:
-    | {
-        type: PropositionType
-        text: string
-        audioCount: number
-      }[]
-    | null
+  propositions: StoredProposition[] | null
 }
 
-type ViewState = "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+interface Theme {
+  id: string
+  name: string
+  subtopics: Subtopic[]
+}
+
+interface ThemeData {
+  id: string
+  name: string
+  subtopics: SubtopicData[]
+}
+
+type ViewState =
+  | "themes"
+  | "subtopics"
+  | "overview"
+  | "recording"
+  | "listening"
+  | "countdown"
+  | "prompt"
 
 export default function PropositionsApp() {
-  const [subtopics, setSubtopics] = useState<Subtopic[]>([
-    { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
+  const [themes, setThemes] = useState<Theme[]>([
+    {
+      id: "theme-1",
+      name: "Tema de ejemplo",
+      subtopics: [
+        { id: "subtopic-1", text: "Si es Derivable entonces es Continuo", propositions: null },
+      ],
+    },
   ])
+  const [currentThemeId, setCurrentThemeId] = useState<string | null>(null)
   const [currentSubtopicId, setCurrentSubtopicId] = useState<string | null>(null)
-  const [viewState, setViewState] = useState<ViewState>("subtopics")
+  const [viewState, setViewState] = useState<ViewState>("themes")
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
@@ -62,7 +87,9 @@ export default function PropositionsApp() {
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
 
-  const currentSubtopic = subtopics.find((s) => s.id === currentSubtopicId)
+  const currentTheme = themes.find((theme) => theme.id === currentThemeId) || null
+  const subtopics = currentTheme?.subtopics ?? []
+  const currentSubtopic = subtopics.find((s) => s.id === currentSubtopicId) || null
   const propositions = currentSubtopic?.propositions || []
 
   useEffect(() => {
@@ -77,7 +104,7 @@ export default function PropositionsApp() {
         return
       }
 
-      if (e.key === "g" && viewState === "subtopics") {
+      if (e.key === "g" && (viewState === "themes" || viewState === "subtopics")) {
         e.preventDefault()
         setShowSettingsModal(true)
         return
@@ -101,11 +128,39 @@ export default function PropositionsApp() {
     loadPersistedData()
   }, [])
 
+  const hydrateThemes = async (themeData: ThemeData[]): Promise<Theme[]> => {
+    return await Promise.all(
+      themeData.map(async (theme) => {
+        const hydratedSubtopics: Subtopic[] = await Promise.all(
+          (theme.subtopics || []).map(async (subtopic) => {
+            if (!subtopic.propositions) {
+              return { id: subtopic.id, text: subtopic.text, propositions: null }
+            }
+
+            const audiosGrouped = await loadAudios(subtopic.id)
+            const propositionsWithAudios: Proposition[] = subtopic.propositions.map((prop, index) => ({
+              id: prop.id || `${subtopic.id}-prop-${index}`,
+              text: prop.text,
+              audios: audiosGrouped[index] || [],
+            }))
+
+            return { id: subtopic.id, text: subtopic.text, propositions: propositionsWithAudios }
+          }),
+        )
+
+        return {
+          id: theme.id,
+          name: theme.name,
+          subtopics: hydratedSubtopics,
+        }
+      }),
+    )
+  }
+
   const loadPersistedData = async () => {
     try {
       console.log("[v0] Starting to load persisted data...")
 
-      // Try to get saved file system handle first
       if (isFileSystemSupported()) {
         const handle = await getSavedDirectoryHandle()
         if (handle) {
@@ -120,44 +175,45 @@ export default function PropositionsApp() {
       }
 
       console.log("[v0] Loading from IndexedDB...")
-      // Fallback to IndexedDB
-      const loadedSubtopics = await loadSubtopics()
+      const loadedThemes = await loadThemes()
 
-      console.log("[v0] Loaded subtopics from IndexedDB:", loadedSubtopics)
-
-      if (loadedSubtopics.length === 0) {
-        console.log("[v0] No subtopics found in IndexedDB")
-        setIsLoadingData(false)
+      if (loadedThemes.length > 0) {
+        console.log("[v0] Loaded themes from IndexedDB:", loadedThemes)
+        const hydrated = await hydrateThemes(loadedThemes)
+        setThemes(hydrated)
         return
       }
 
-      // Load subtopics with their propositions and audios
-      const subtopicsWithAudios: Subtopic[] = await Promise.all(
-        loadedSubtopics.map(async (subtopic) => {
-          if (!subtopic.propositions) {
-            console.log(`[v0] Subtopic ${subtopic.id} has no propositions`)
-            return subtopic
-          }
+      console.log("[v0] No themes found, attempting to load legacy subtopics...")
+      const legacySubtopics = await loadSubtopics()
 
-          console.log(`[v0] Loading audios for subtopic ${subtopic.id}`)
-          // Load audios for this subtopic
-          const audiosGrouped = await loadAudios(subtopic.id)
+      if (legacySubtopics.length === 0) {
+        console.log("[v0] No legacy data found")
+        return
+      }
 
-          // Map audios to propositions
-          const propositionsWithAudios = subtopic.propositions.map((prop, propIndex) => ({
-            ...prop,
-            audios: audiosGrouped[propIndex] || [],
-          }))
+      const legacyTheme: Theme = {
+        id: "legacy-theme",
+        name: "Tema migrado",
+        subtopics: await Promise.all(
+          legacySubtopics.map(async (subtopic) => {
+            if (!subtopic.propositions) {
+              return { id: subtopic.id, text: subtopic.text, propositions: null }
+            }
 
-          return {
-            ...subtopic,
-            propositions: propositionsWithAudios,
-          }
-        }),
-      )
+            const audiosGrouped = await loadAudios(subtopic.id)
+            const propositionsWithAudios: Proposition[] = subtopic.propositions.map((prop: any, index: number) => ({
+              id: prop.id || prop.type || `${subtopic.id}-prop-${index}`,
+              text: prop.text,
+              audios: audiosGrouped[index] || [],
+            }))
 
-      console.log("[v0] Final subtopics with audios:", subtopicsWithAudios)
-      setSubtopics(subtopicsWithAudios)
+            return { id: subtopic.id, text: subtopic.text, propositions: propositionsWithAudios }
+          }),
+        ),
+      }
+
+      setThemes([legacyTheme])
     } catch (error) {
       console.error("[v0] Error loading persisted data:", error)
     } finally {
@@ -168,53 +224,31 @@ export default function PropositionsApp() {
 
   const loadFromFileSystem = async (handle: FileSystemDirectoryHandle) => {
     try {
-      console.log("[v0] Reading subtopics.json from file system...")
-      const data = await readJSONFile(handle, "subtopics.json")
-      if (!data || !Array.isArray(data)) {
-        console.log("[v0] No valid subtopics.json found")
+      console.log("[v0] Reading themes.json from file system...")
+      let data = await readJSONFile(handle, "themes.json")
+
+      if ((!data || !Array.isArray(data)) && !data?.length) {
+        console.log("[v0] themes.json not found, trying legacy subtopics.json")
+        data = await readJSONFile(handle, "subtopics.json")
+        if (!data || !Array.isArray(data)) {
+          console.log("[v0] No valid data found in file system")
+          return
+        }
+
+        const legacyThemeData: ThemeData = {
+          id: "legacy-theme",
+          name: "Tema migrado",
+          subtopics: data,
+        }
+
+        const hydrated = await hydrateThemes([legacyThemeData])
+        setThemes(hydrated)
         return
       }
 
-      console.log("[v0] Found subtopics in file system:", data)
-
-      // Load subtopics with audios
-      const subtopicsWithAudios: Subtopic[] = await Promise.all(
-        data.map(async (subtopic: any) => {
-          if (!subtopic.propositions) {
-            return subtopic
-          }
-
-          // Load audios for each proposition
-          const propositionsWithAudios = await Promise.all(
-            subtopic.propositions.map(async (prop: any, propIndex: number) => {
-              const audios: Blob[] = []
-              let audioIndex = 0
-
-              // Try to load all audio files for this proposition
-              while (true) {
-                const filename = `audio-${subtopic.id}-${propIndex}-${audioIndex}.webm`
-                const blob = await readBlobFile(handle, filename)
-                if (!blob) break
-                audios.push(blob)
-                audioIndex++
-              }
-
-              return {
-                ...prop,
-                audios,
-              }
-            }),
-          )
-
-          return {
-            ...subtopic,
-            propositions: propositionsWithAudios,
-          }
-        }),
-      )
-
-      console.log("[v0] Loaded subtopics from file system:", subtopicsWithAudios)
-      setSubtopics(subtopicsWithAudios)
+      const hydrated = await hydrateThemes(data as ThemeData[])
+      console.log("[v0] Loaded themes from file system:", hydrated)
+      setThemes(hydrated)
     } catch (error) {
       console.error("[v0] Error loading from file system:", error)
     }
@@ -224,31 +258,34 @@ export default function PropositionsApp() {
     if (!isLoadingData) {
       saveData()
     }
-  }, [subtopics, isLoadingData])
+  }, [themes, isLoadingData])
 
   const saveData = async () => {
     try {
       if (useFileSystem && fileSystemHandle) {
         await saveToFileSystem(fileSystemHandle)
       } else {
-        // Fallback to IndexedDB
-        const subtopicsToSave = subtopics.map((subtopic) => ({
-          id: subtopic.id,
-          text: subtopic.text,
-          propositions: subtopic.propositions
-            ? subtopic.propositions.map((prop) => ({
-                type: prop.type,
-                text: prop.text,
-                audios: [],
-              }))
-            : null,
+        const themesToSave: ThemeData[] = themes.map((theme) => ({
+          id: theme.id,
+          name: theme.name,
+          subtopics: theme.subtopics.map((subtopic) => ({
+            id: subtopic.id,
+            text: subtopic.text,
+            propositions: subtopic.propositions
+              ? subtopic.propositions.map((prop) => ({
+                  id: prop.id,
+                  text: prop.text,
+                  audioCount: prop.audios.length,
+                }))
+              : null,
+          })),
         }))
 
-        await saveSubtopics(subtopicsToSave)
+        await saveThemes(themesToSave)
 
-        // Save audio blobs separately
-        for (const subtopic of subtopics) {
-          if (subtopic.propositions) {
+        for (const theme of themes) {
+          for (const subtopic of theme.subtopics) {
+            if (!subtopic.propositions) continue
             for (let propIndex = 0; propIndex < subtopic.propositions.length; propIndex++) {
               const prop = subtopic.propositions[propIndex]
               for (let audioIndex = 0; audioIndex < prop.audios.length; audioIndex++) {
@@ -265,23 +302,27 @@ export default function PropositionsApp() {
 
   const saveToFileSystem = async (handle: FileSystemDirectoryHandle) => {
     try {
-      // Save subtopics structure
-      const subtopicsData = subtopics.map((subtopic) => ({
-        id: subtopic.id,
-        text: subtopic.text,
-        propositions: subtopic.propositions
-          ? subtopic.propositions.map((prop) => ({
-              type: prop.type,
-              text: prop.text,
-            }))
-          : null,
+      const themesData: ThemeData[] = themes.map((theme) => ({
+        id: theme.id,
+        name: theme.name,
+        subtopics: theme.subtopics.map((subtopic) => ({
+          id: subtopic.id,
+          text: subtopic.text,
+          propositions: subtopic.propositions
+            ? subtopic.propositions.map((prop) => ({
+                id: prop.id,
+                text: prop.text,
+                audioCount: prop.audios.length,
+              }))
+            : null,
+        })),
       }))
 
-      await writeJSONFile(handle, "subtopics.json", subtopicsData)
+      await writeJSONFile(handle, "themes.json", themesData)
 
-      // Save audio files
-      for (const subtopic of subtopics) {
-        if (subtopic.propositions) {
+      for (const theme of themes) {
+        for (const subtopic of theme.subtopics) {
+          if (!subtopic.propositions) continue
           for (let propIndex = 0; propIndex < subtopic.propositions.length; propIndex++) {
             const prop = subtopic.propositions[propIndex]
             for (let audioIndex = 0; audioIndex < prop.audios.length; audioIndex++) {
@@ -320,20 +361,103 @@ export default function PropositionsApp() {
     }
   }
 
+  const updateThemeById = (themeId: string, updater: (theme: Theme) => Theme) => {
+    setThemes((prevThemes) =>
+      prevThemes.map((theme) => (theme.id === themeId ? updater(theme) : theme)),
+    )
+  }
+
+  const addTheme = () => {
+    const newTheme: Theme = {
+      id: `theme-${Date.now()}`,
+      name: "Nuevo tema",
+      subtopics: [],
+    }
+    setThemes((prevThemes) => [...prevThemes, newTheme])
+  }
+
+  const updateThemeName = (themeId: string, name: string) => {
+    setThemes((prevThemes) =>
+      prevThemes.map((theme) => (theme.id === themeId ? { ...theme, name } : theme)),
+    )
+  }
+
+  const openTheme = (themeId: string) => {
+    setCurrentThemeId(themeId)
+    setCurrentSubtopicId(null)
+    setViewState("subtopics")
+  }
+
+  const importFromClipboard = async () => {
+    if (!currentThemeId) return
+    try {
+      const clipboardText = await navigator.clipboard.readText()
+      const parsed = JSON.parse(clipboardText)
+
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Formato de portapapeles inválido")
+      }
+
+      const normalizedTexts = parsed.map((item) => {
+        if (typeof item === "string") return item.trim()
+        if (item && typeof item.texto === "string") return item.texto.trim()
+        if (item && typeof item.text === "string") return item.text.trim()
+        throw new Error("Formato de portapapeles inválido")
+      })
+
+      const [subtopicTitle, ...propositionTexts] = normalizedTexts
+      if (!subtopicTitle) {
+        throw new Error("El portapapeles no contiene un título de subtema válido")
+      }
+
+      const newSubtopicId = `subtopic-${Date.now()}`
+      const propositionsList: Proposition[] = propositionTexts.map((text, index) => ({
+        id: `${newSubtopicId}-custom-${index}`,
+        text,
+        audios: [],
+      }))
+
+      const newSubtopic: Subtopic = {
+        id: newSubtopicId,
+        text: subtopicTitle,
+        propositions: propositionsList.length > 0 ? propositionsList : null,
+      }
+
+      updateThemeById(currentThemeId, (theme) => ({
+        ...theme,
+        subtopics: [...theme.subtopics, newSubtopic],
+      }))
+    } catch (error) {
+      console.error("[v0] Error importing from clipboard:", error)
+      alert("No se pudo importar el contenido del portapapeles. Verifica el formato e intenta nuevamente.")
+    }
+  }
+
   const addSubtopic = () => {
+    if (!currentThemeId) return
     const newSubtopic: Subtopic = {
-      id: Date.now().toString(),
+      id: `subtopic-${Date.now()}`,
       text: "",
       propositions: null,
     }
-    setSubtopics([...subtopics, newSubtopic])
+    updateThemeById(currentThemeId, (theme) => ({
+      ...theme,
+      subtopics: [...theme.subtopics, newSubtopic],
+    }))
   }
 
   const updateSubtopicText = (id: string, text: string) => {
-    setSubtopics(subtopics.map((s) => (s.id === id ? { ...s, text } : s)))
+    if (!currentThemeId) return
+    updateThemeById(currentThemeId, (theme) => ({
+      ...theme,
+      subtopics: theme.subtopics.map((subtopic) =>
+        subtopic.id === id ? { ...subtopic, text } : subtopic,
+      ),
+    }))
   }
 
   const evaluatePropositions = async (subtopicId: string) => {
+    if (!currentThemeId) return
     const subtopic = subtopics.find((s) => s.id === subtopicId)
     if (!subtopic || !subtopic.text.trim()) return
 
@@ -342,6 +466,7 @@ export default function PropositionsApp() {
 
     if (subtopic.propositions && subtopic.propositions.length > 0) {
       console.log("[v0] Propositions already exist, going to interface")
+      setCurrentThemeId(currentThemeId)
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
       setViewState("recording")
@@ -361,13 +486,18 @@ export default function PropositionsApp() {
       console.log("[v0] Generated propositions:", result)
 
       const newPropositions: Proposition[] = [
-        { type: "condicion", text: subtopic.text, audios: [] },
-        { type: "reciproco", text: result.reciproco, audios: [] },
-        { type: "inverso", text: result.inverso, audios: [] },
-        { type: "contrareciproco", text: result.contrareciproco, audios: [] },
+        { id: `${subtopic.id}-condicion`, text: subtopic.text, audios: [] },
+        { id: `${subtopic.id}-reciproco`, text: result.reciproco, audios: [] },
+        { id: `${subtopic.id}-inverso`, text: result.inverso, audios: [] },
+        { id: `${subtopic.id}-contrareciproco`, text: result.contrareciproco, audios: [] },
       ]
 
-      setSubtopics(subtopics.map((s) => (s.id === subtopicId ? { ...s, propositions: newPropositions } : s)))
+      updateThemeById(currentThemeId, (theme) => ({
+        ...theme,
+        subtopics: theme.subtopics.map((s) =>
+          s.id === subtopicId ? { ...s, propositions: newPropositions } : s,
+        ),
+      }))
 
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
@@ -395,22 +525,43 @@ export default function PropositionsApp() {
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
 
-        setSubtopics(
-          subtopics.map((s) => {
-            if (s.id === currentSubtopicId && s.propositions) {
-              const newPropositions = [...s.propositions]
-              newPropositions[currentIndex].audios.push(audioBlob)
-              return { ...s, propositions: newPropositions }
-            }
-            return s
-          }),
-        )
+        if (currentThemeId && currentSubtopicId) {
+          setThemes((prevThemes) =>
+            prevThemes.map((theme) => {
+              if (theme.id !== currentThemeId) {
+                return theme
+              }
+
+              return {
+                ...theme,
+                subtopics: theme.subtopics.map((subtopic) => {
+                  if (subtopic.id === currentSubtopicId && subtopic.propositions) {
+                    const updatedPropositions = subtopic.propositions.map((prop, index) => {
+                      if (index !== currentIndex) {
+                        return prop
+                      }
+                      return {
+                        ...prop,
+                        audios: [...prop.audios, audioBlob],
+                      }
+                    })
+
+                    return { ...subtopic, propositions: updatedPropositions }
+                  }
+                  return subtopic
+                }),
+              }
+            }),
+          )
+        }
 
         stream.getTracks().forEach((track) => track.stop())
         setViewState("countdown")
+        setIsRecording(false)
       }
 
       mediaRecorder.start()
+      setIsRecording(true)
     } catch (error) {
       console.error("[v0] Error accessing microphone:", error)
     }
@@ -421,12 +572,22 @@ export default function PropositionsApp() {
       mediaRecorderRef.current.stop()
       mediaRecorderRef.current = null
     }
+    setIsRecording(false)
   }
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isRecording, setIsRecording] = useState(false)
   const [countdown, setCountdown] = useState(5)
   const [showRelaxAnimation, setShowRelaxAnimation] = useState(false)
+
+  const propositionLabels = ["Condición", "Recíproco", "Inverso", "Contra-Recíproco"]
+
+  const getPropositionLabel = (index: number) => {
+    if (propositions.length === propositionLabels.length) {
+      return propositionLabels[index] ?? `Proposición ${index + 1}`
+    }
+    return `Proposición ${index + 1}`
+  }
 
   useEffect(() => {
     if (viewState === "countdown" && countdown > 0) {
@@ -491,7 +652,8 @@ export default function PropositionsApp() {
   }
 
   const goToHome = () => {
-    setViewState("subtopics")
+    setViewState("themes")
+    setCurrentThemeId(null)
     setCurrentSubtopicId(null)
     setIsRecording(false)
     if (audioRef.current) {
@@ -500,12 +662,17 @@ export default function PropositionsApp() {
     }
   }
 
-  if (viewState === "subtopics") {
+  if (viewState === "themes") {
     return (
       <div className="min-h-screen bg-background p-8">
         <div className="max-w-4xl mx-auto space-y-6">
-          <div className="flex items-center justify-between mb-8">
-            <h1 className="text-3xl font-bold text-balance">Subtemas</h1>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-balance">Temas</h1>
+              <p className="text-muted-foreground">
+                Administra tus temas y accede a sus subtemas y proposiciones.
+              </p>
+            </div>
             <div className="flex items-center gap-2">
               {isFileSystemSupported() && !useFileSystem && (
                 <Button variant="outline" onClick={activateFileSystemPersistence}>
@@ -522,6 +689,9 @@ export default function PropositionsApp() {
                   💾 Guardado en navegador
                 </span>
               )}
+              <Button variant="outline" size="icon" onClick={addTheme} title="Agregar tema">
+                <Plus className="w-5 h-5" />
+              </Button>
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
                 <Settings className="w-5 h-5" />
               </Button>
@@ -534,24 +704,133 @@ export default function PropositionsApp() {
             </Card>
           ) : (
             <Card className="p-6 space-y-4">
-              {subtopics.map((subtopic) => (
-                <div key={subtopic.id} className="flex items-center gap-4">
-                  <input
-                    type="text"
-                    value={subtopic.text}
-                    onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                    placeholder="Ingresa una condición o teorema..."
-                    className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <Button
-                    onClick={() => evaluatePropositions(subtopic.id)}
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
-                    {isGenerating ? "Generando..." : "Evaluar proposiciones"}
-                  </Button>
-                </div>
-              ))}
+              {themes.length === 0 ? (
+                <p className="text-center text-muted-foreground py-10">
+                  No hay temas guardados. Usa el botón + para crear uno nuevo.
+                </p>
+              ) : (
+                themes.map((theme) => (
+                  <div key={theme.id} className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      value={theme.name}
+                      onChange={(e) => updateThemeName(theme.id, e.target.value)}
+                      placeholder="Nombre del tema"
+                      className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <Button onClick={() => openTheme(theme.id)} className="sm:w-auto whitespace-nowrap">
+                      Acceder
+                    </Button>
+                  </div>
+                ))
+              )}
+            </Card>
+          )}
+        </div>
+
+        <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+      </div>
+    )
+  }
+
+  if (viewState === "subtopics") {
+    if (!currentTheme) {
+      return (
+        <div className="min-h-screen bg-background p-8">
+          <div className="max-w-3xl mx-auto">
+            <Card className="p-12 space-y-4 text-center">
+              <p className="text-muted-foreground">Selecciona un tema desde la capa principal.</p>
+              <Button onClick={goToHome} className="mx-auto">
+                Volver a temas
+              </Button>
+            </Card>
+          </div>
+          <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+        </div>
+      )
+    }
+
+    return (
+      <div className="min-h-screen bg-background p-8">
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={goToHome}
+                className="hover:bg-primary/10"
+                title="Volver a temas"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+              <input
+                type="text"
+                value={currentTheme.name}
+                onChange={(e) => updateThemeName(currentTheme.id, e.target.value)}
+                className="text-3xl font-bold bg-transparent focus:outline-none focus:ring-2 focus:ring-ring px-3 py-2 rounded-md border border-transparent focus:border-ring"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              {isFileSystemSupported() && !useFileSystem && (
+                <Button variant="outline" onClick={activateFileSystemPersistence}>
+                  Activar persistencia de archivos
+                </Button>
+              )}
+              {useFileSystem && (
+                <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-primary/10">
+                  📁 Persistencia de archivos activa
+                </span>
+              )}
+              {!useFileSystem && (
+                <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-muted">
+                  💾 Guardado en navegador
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={importFromClipboard}
+                title="Importar subtema desde portapapeles"
+              >
+                <Plus className="w-5 h-5" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
+                <Settings className="w-5 h-5" />
+              </Button>
+            </div>
+          </div>
+
+          {isLoadingData ? (
+            <Card className="p-12 text-center">
+              <p className="text-muted-foreground">Cargando datos...</p>
+            </Card>
+          ) : (
+            <Card className="p-6 space-y-4">
+              {subtopics.length === 0 ? (
+                <p className="text-center text-muted-foreground py-10">
+                  Aún no hay subtemas. Usa el botón + para importar o crear uno nuevo.
+                </p>
+              ) : (
+                subtopics.map((subtopic) => (
+                  <div key={subtopic.id} className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      value={subtopic.text}
+                      onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
+                      placeholder="Ingresa un subtema..."
+                      className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <Button
+                      onClick={() => evaluatePropositions(subtopic.id)}
+                      disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
+                      className="whitespace-nowrap"
+                    >
+                      {isGenerating ? "Generando..." : "Evaluar proposiciones"}
+                    </Button>
+                  </div>
+                ))
+              )}
 
               <Button variant="outline" onClick={addSubtopic} className="w-full bg-transparent">
                 <Plus className="w-4 h-4 mr-2" />
@@ -565,7 +844,6 @@ export default function PropositionsApp() {
       </div>
     )
   }
-
   if (showRelaxAnimation) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
@@ -588,9 +866,18 @@ export default function PropositionsApp() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={goToHome}
+            onClick={() => setViewState("subtopics")}
             className="hover:bg-primary/10"
             title="Volver a subtemas"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={goToHome}
+            className="hover:bg-primary/10"
+            title="Volver a temas"
           >
             <Home className="w-6 h-6" />
           </Button>
@@ -602,19 +889,14 @@ export default function PropositionsApp() {
           <Card className="p-8 space-y-6">
             {propositions.map((prop, index) => (
               <div
-                key={prop.type}
+                key={prop.id}
                 className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
               >
                 <div className="flex-1 space-y-2">
                   <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                    {index === 0 && "Condición"}
-                    {index === 1 && "Recíproco"}
-                    {index === 2 && "Inverso"}
-                    {index === 3 && "Contra-Recíproco"}
+                    {getPropositionLabel(index)}
                   </p>
-                  <p className="text-lg leading-relaxed text-foreground font-mono tracking-wide break-words">
-                    {prop.text}
-                  </p>
+                  <MathText text={prop.text} className="text-lg leading-relaxed text-foreground" />
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {prop.audios.length > 0 && (
@@ -675,14 +957,11 @@ export default function PropositionsApp() {
           <div className="flex items-start justify-between gap-8">
             <div className="flex-1 space-y-3">
               <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                {currentIndex === 0 && "Condición"}
-                {currentIndex === 1 && "Recíproco"}
-                {currentIndex === 2 && "Inverso"}
-                {currentIndex === 3 && "Contra-Recíproco"}
+                {getPropositionLabel(currentIndex)}
               </p>
-              <p className="text-2xl leading-relaxed font-mono tracking-wide text-foreground break-words">
-                {currentProposition?.text}
-              </p>
+              {currentProposition && (
+                <MathText text={currentProposition.text} className="text-2xl leading-relaxed text-foreground" />
+              )}
             </div>
             <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
           </div>
@@ -753,7 +1032,7 @@ export default function PropositionsApp() {
         <div className="flex gap-3 justify-start flex-wrap">
           {currentProposition?.audios.map((_, audioIdx) => (
             <div
-              key={`${currentProposition.type}-${audioIdx}`}
+              key={`${currentProposition.id}-${audioIdx}`}
               className="w-10 h-10 flex items-center justify-center text-muted-foreground"
               title={`Audio ${audioIdx + 1}`}
             >
