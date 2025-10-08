@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft } from "lucide-react"
+import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft, Loader2 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { generatePropositions } from "./actions"
 import { saveThemes, loadThemes, saveAudio, loadAudios } from "@/lib/storage"
@@ -59,6 +59,7 @@ export default function PropositionsApp() {
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
+  const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -742,12 +743,12 @@ export default function PropositionsApp() {
             const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
 
             const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
+            const baseType = incomingType ?? "custom"
             const label =
               typeof entry?.etiqueta === "string"
                 ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
+                : baseType !== "custom" && propositionTypeLabels[baseType as PropositionType]
+                  ? propositionTypeLabels[baseType as PropositionType]
                   : getLabelForProposition(baseType, index)
 
             return {
@@ -809,14 +810,15 @@ export default function PropositionsApp() {
     if (!currentThemeId) return
 
     const theme = themes.find((t) => t.id === currentThemeId)
-    const hasSubtopic = theme?.subtopics.some((subtopic) => subtopic.id === subtopicId)
+    const subtopic = theme?.subtopics.find((item) => item.id === subtopicId)
 
-    if (!hasSubtopic) {
+    if (!subtopic) {
       return
     }
 
     setCurrentSubtopicId(subtopicId)
     setCurrentIndex(0)
+    setPendingPracticeIndex(subtopic.propositions && subtopic.propositions.length > 0 ? 0 : null)
     setViewState("overview")
   }
 
@@ -834,6 +836,7 @@ export default function PropositionsApp() {
       console.log("[v0] Propositions already exist, going to interface")
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
+      setPendingPracticeIndex(0)
       setViewState("overview")
       return
     }
@@ -887,6 +890,7 @@ export default function PropositionsApp() {
 
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
+      setPendingPracticeIndex(0)
       setViewState("overview")
     } catch (error) {
       console.error("[v0] Error generating propositions:", error)
@@ -957,6 +961,7 @@ export default function PropositionsApp() {
   const [isRecording, setIsRecording] = useState(false)
   const [countdown, setCountdown] = useState(5)
   const [showRelaxAnimation, setShowRelaxAnimation] = useState(false)
+  const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
 
   useEffect(() => {
     if (viewState === "countdown" && countdown > 0) {
@@ -991,6 +996,7 @@ export default function PropositionsApp() {
       setViewState("recording")
       setCountdown(5)
     } else {
+      setPendingPracticeIndex(null)
       setViewState("overview")
     }
   }
@@ -999,6 +1005,7 @@ export default function PropositionsApp() {
     setShowRelaxAnimation(true)
     setTimeout(() => {
       setShowRelaxAnimation(false)
+      setPendingPracticeIndex(null)
       setViewState("overview")
     }, 5000)
   }
@@ -1024,10 +1031,100 @@ export default function PropositionsApp() {
     setCountdown(5)
   }
 
+  useEffect(() => {
+    if (viewState === "overview" && pendingPracticeIndex !== null) {
+      const targetIndex = pendingPracticeIndex
+      if (typeof targetIndex === "number" && propositions[targetIndex]) {
+        setPendingPracticeIndex(null)
+        setCurrentIndex(targetIndex)
+        setViewState("recording")
+        setCountdown(5)
+      }
+    }
+  }, [viewState, pendingPracticeIndex, propositions])
+
+  const expandCustomProposition = async (subtopicId: string, propositionId: string) => {
+    if (!currentThemeId) return
+
+    const theme = themes.find((t) => t.id === currentThemeId)
+    const subtopic = theme?.subtopics.find((s) => s.id === subtopicId)
+    if (!subtopic?.propositions) return
+
+    const index = subtopic.propositions.findIndex((prop) => prop.id === propositionId)
+    if (index === -1) return
+
+    const proposition = subtopic.propositions[index]
+    if (proposition.type !== "custom") return
+
+    setGeneratingPropositionId(propositionId)
+    try {
+      const result = await generatePropositions(proposition.text)
+
+      if ("error" in result) {
+        throw new Error(result.error)
+      }
+
+      const generated: Proposition[] = [
+        {
+          id: `${propositionId}-condicion`,
+          type: "condicion",
+          label: propositionTypeLabels.condicion,
+          text: proposition.text,
+          audios: proposition.audios,
+        },
+        {
+          id: `${propositionId}-reciproco`,
+          type: "reciproco",
+          label: propositionTypeLabels.reciproco,
+          text: result.reciproco,
+          audios: [],
+        },
+        {
+          id: `${propositionId}-inverso`,
+          type: "inverso",
+          label: propositionTypeLabels.inverso,
+          text: result.inverso,
+          audios: [],
+        },
+        {
+          id: `${propositionId}-contrareciproco`,
+          type: "contrareciproco",
+          label: propositionTypeLabels.contrareciproco,
+          text: result.contrareciproco,
+          audios: [],
+        },
+      ]
+
+      updateSubtopicById(currentThemeId, subtopicId, (current) => {
+        if (!current.propositions) {
+          return current
+        }
+
+        const updated = [...current.propositions]
+        updated.splice(index, 1, ...generated)
+
+        return {
+          ...current,
+          propositions: updated,
+        }
+      })
+
+      setCurrentSubtopicId(subtopicId)
+      setPendingPracticeIndex(index)
+      setViewState("overview")
+    } catch (error) {
+      console.error("[v0] Error generating propositions for custom entry:", error)
+      alert("Error al generar las variantes de esta proposición. Intenta nuevamente.")
+    } finally {
+      setGeneratingPropositionId(null)
+    }
+  }
+
   const goToHome = () => {
     setViewState("themes")
     setCurrentSubtopicId(null)
     setIsRecording(false)
+    setPendingPracticeIndex(null)
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current = null
@@ -1283,6 +1380,27 @@ export default function PropositionsApp() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      {prop.type === "custom" && currentSubtopic && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
+                          disabled={
+                            generatingPropositionId === prop.id ||
+                            isGenerating ||
+                            isRecording
+                          }
+                          className="whitespace-nowrap"
+                        >
+                          {generatingPropositionId === prop.id ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                            </>
+                          ) : (
+                            "Generar variantes"
+                          )}
+                        </Button>
+                      )}
                       {prop.audios.length > 0 && (
                         <Button
                           variant="ghost"
@@ -1327,7 +1445,10 @@ export default function PropositionsApp() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => setViewState("overview")}
+          onClick={() => {
+            setPendingPracticeIndex(null)
+            setViewState("overview")
+          }}
           className="hover:bg-primary/10"
           title="Volver al subtema"
         >
@@ -1355,7 +1476,30 @@ export default function PropositionsApp() {
                 <MathText text={currentProposition?.text ?? ""} />
               </div>
             </div>
-            <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
+            <div className="flex flex-col items-end gap-3">
+              <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
+              {currentProposition?.type === "custom" && currentSubtopic && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => expandCustomProposition(currentSubtopic.id, currentProposition.id)}
+                  disabled={
+                    generatingPropositionId === currentProposition.id ||
+                    isGenerating ||
+                    isRecording
+                  }
+                  className="whitespace-nowrap"
+                >
+                  {generatingPropositionId === currentProposition.id ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                    </>
+                  ) : (
+                    "Generar variantes"
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </Card>
 
