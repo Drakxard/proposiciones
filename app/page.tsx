@@ -82,6 +82,14 @@ export default function PropositionsApp() {
     contrareciproco: "Contra-Recíproco",
   }
 
+  const validPropositionKinds: PropositionKind[] = [
+    "condicion",
+    "reciproco",
+    "inverso",
+    "contrareciproco",
+    "custom",
+  ]
+
   const mapIndexToType = (index: number): PropositionKind => {
     switch (index) {
       case 0:
@@ -741,13 +749,15 @@ export default function PropositionsApp() {
                 : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
             const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
 
-            const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
+            const incomingTypeRaw = typeof entry?.tipo === "string" ? entry.tipo : undefined
+            const baseType: PropositionKind = validPropositionKinds.includes(incomingTypeRaw as PropositionKind)
+              ? (incomingTypeRaw as PropositionKind)
+              : "condicion"
             const label =
               typeof entry?.etiqueta === "string"
                 ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
+                : baseType !== "custom" && propositionTypeLabels[baseType as PropositionType]
+                  ? propositionTypeLabels[baseType as PropositionType]
                   : getLabelForProposition(baseType, index)
 
             return {
