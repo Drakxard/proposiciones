@@ -1,20 +1,26 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
+type PropositionKind = PropositionType | "custom"
 
 interface PropositionsDB extends DBSchema {
   subtopics: {
     key: string
     value: {
       id: string
-      text: string
-      propositions:
-        | {
-            type: PropositionType
-            text: string
-            audios: [] // Empty array, actual blobs stored separately
-          }[]
-        | null
+      name: string
+      subtopics: {
+        id: string
+        text: string
+        propositions:
+          | {
+              id: string
+              type: PropositionKind
+              label: string
+              text: string
+            }[]
+          | null
+      }[]
     }
   }
   audios: {
@@ -65,20 +71,20 @@ function getDB() {
   return dbPromise
 }
 
-// Subtopics operations
-export async function saveSubtopics(subtopics: any[]) {
+// Themes operations (stored in the historical "subtopics" store for backwards compatibility)
+export async function saveThemes(themes: any[]) {
   const db = await getDB()
   const tx = db.transaction("subtopics", "readwrite")
 
   // Clear existing and save new
   await tx.store.clear()
-  for (const subtopic of subtopics) {
-    await tx.store.put(subtopic)
+  for (const theme of themes) {
+    await tx.store.put(theme)
   }
   await tx.done
 }
 
-export async function loadSubtopics() {
+export async function loadThemes() {
   const db = await getDB()
   return await db.getAll("subtopics")
 }
