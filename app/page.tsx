@@ -686,6 +686,157 @@ export default function PropositionsApp() {
     setViewState("subtopics")
   }
 
+  const SUBTOPIC_COLLECTION_KEYS = [
+    "subtemas",
+    "subtopics",
+  ] as const
+
+  const COLLECTION_KEYS = [
+    "proposiciones",
+    "propositions",
+    "condiciones",
+    "conditions",
+    "items",
+    "values",
+    "lista",
+    "list",
+  ] as const
+
+  const VALID_PROPOSITION_TYPES: PropositionKind[] = [
+    "condicion",
+    "reciproco",
+    "inverso",
+    "contrareciproco",
+    "custom",
+  ]
+
+  const findCollectionByKeys = (
+    value: any,
+    keys: readonly string[],
+  ): unknown[] | null => {
+    if (!value || typeof value !== "object") {
+      return null
+    }
+
+    for (const key of keys) {
+      const candidate = (value as Record<string, unknown>)[key]
+      if (Array.isArray(candidate)) {
+        return candidate as unknown[]
+      }
+    }
+
+    return null
+  }
+
+  const extractTextValue = (value: any): string | null => {
+    if (value == null) return null
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      return trimmed.length ? trimmed : null
+    }
+    if (typeof value === "number") {
+      return value.toString()
+    }
+    if (typeof value === "object") {
+      const preferredKeys = [
+        "texto",
+        "text",
+        "value",
+        "label",
+        "nombre",
+        "name",
+        "subtema",
+        "tema",
+        "titulo",
+        "title",
+        "descripcion",
+        "description",
+      ]
+
+      for (const key of preferredKeys) {
+        const candidate = (value as Record<string, unknown>)[key]
+        if (typeof candidate === "string" || typeof candidate === "number") {
+          const normalized = candidate.toString().trim()
+          if (normalized.length) {
+            return normalized
+          }
+        }
+      }
+    }
+    return null
+  }
+
+  const extractTextsFromCollection = (value: any): string[] => {
+    if (value == null) return []
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => extractTextsFromCollection(item))
+    }
+    if (typeof value === "object") {
+      for (const key of COLLECTION_KEYS) {
+        const candidate = (value as Record<string, unknown>)[key]
+        if (Array.isArray(candidate)) {
+          return (candidate as unknown[]).flatMap((item) => extractTextsFromCollection(item))
+        }
+      }
+
+      const directText = extractTextValue(value)
+      return directText ? [directText] : []
+    }
+
+    const directText = extractTextValue(value)
+    return directText ? [directText] : []
+  }
+
+  const createPropositionsFromCollection = (
+    collection: any[],
+    subtopicId: string,
+  ): Proposition[] | null => {
+    if (!Array.isArray(collection) || collection.length === 0) {
+      return null
+    }
+
+    const propositions: Proposition[] = []
+
+    collection.forEach((entry: any, index: number) => {
+      const textValue = extractTextValue(entry)
+      if (textValue == null) {
+        return
+      }
+
+      const incomingTypeRaw = (entry?.tipo ?? entry?.type) as string | undefined
+      const normalizedType = VALID_PROPOSITION_TYPES.includes(
+        incomingTypeRaw as PropositionKind,
+      )
+        ? (incomingTypeRaw as PropositionKind)
+        : undefined
+      const type = normalizedType ?? mapIndexToType(index)
+
+      const incomingLabelRaw = (entry?.etiqueta ?? entry?.label) as string | undefined
+      const trimmedLabel = incomingLabelRaw?.trim()
+      const label =
+        trimmedLabel && trimmedLabel.length
+          ? trimmedLabel
+          : type !== "custom" && propositionTypeLabels[type as PropositionType]
+            ? propositionTypeLabels[type as PropositionType]
+            : getLabelForProposition(type, index)
+
+      const incomingIdRaw = (entry?.id as string | undefined)?.trim()
+      const propositionId = incomingIdRaw && incomingIdRaw.length
+        ? incomingIdRaw
+        : `${subtopicId}-${index}`
+
+      propositions.push({
+        id: propositionId,
+        type,
+        label,
+        text: textValue,
+        audios: [],
+      })
+    })
+
+    return propositions.length > 0 ? propositions : null
+  }
+
   const importSubtopicFromClipboard = async () => {
     if (!currentThemeId) return
 
@@ -721,55 +872,126 @@ export default function PropositionsApp() {
         }
       }
 
+      const parsedArray = Array.isArray(parsed) ? parsed : [parsed]
+
+      const subtopicsFromThemeContainers = parsedArray.flatMap((entry: any) => {
+        const collection = findCollectionByKeys(entry, SUBTOPIC_COLLECTION_KEYS)
+        return collection ?? []
+      })
+
+      if (subtopicsFromThemeContainers.length > 0) {
+        const timestamp = Date.now()
+        const newSubtopics: Subtopic[] = []
+
+        subtopicsFromThemeContainers.forEach((subtopicEntry: any) => {
+          const subtopicText = extractTextValue(subtopicEntry)
+          if (!subtopicText) {
+            return
+          }
+
+          const incomingId = (subtopicEntry?.id as string | undefined)?.trim()
+          const subtopicId =
+            incomingId && incomingId.length
+              ? incomingId
+              : `subtopic-${timestamp}-${newSubtopics.length}`
+
+          const propositionCollection = findCollectionByKeys(
+            subtopicEntry,
+            COLLECTION_KEYS,
+          )
+          const propositions = propositionCollection
+            ? createPropositionsFromCollection(propositionCollection, subtopicId)
+            : null
+
+          newSubtopics.push({
+            id: subtopicId,
+            text: subtopicText,
+            propositions,
+          })
+        })
+
+        if (newSubtopics.length === 0) {
+          throw new Error("No se encontraron subtemas válidos en el portapapeles")
+        }
+
+        updateThemeById(currentThemeId, (theme) => ({
+          ...theme,
+          subtopics: [...theme.subtopics, ...newSubtopics],
+        }))
+        return
+      }
+
       if (!Array.isArray(parsed) || parsed.length === 0) {
         throw new Error("Formato inválido del portapapeles")
       }
 
       const [subtopicInfo, ...propositionEntries] = parsed
 
-      if (!subtopicInfo || typeof subtopicInfo.texto !== "string") {
-        throw new Error("El primer elemento debe incluir la propiedad 'texto'")
+      const subtopicText = extractTextValue(subtopicInfo)
+      if (!subtopicText) {
+        throw new Error("El primer elemento debe incluir un texto para el subtema")
       }
 
-      const newSubtopicId = `subtopic-${Date.now()}`
+      const hasCollectionInFirstItem =
+        typeof subtopicInfo === "object" &&
+        subtopicInfo !== null &&
+        COLLECTION_KEYS.some((key) => Array.isArray((subtopicInfo as Record<string, unknown>)[key]))
 
-      const propositions: Proposition[] | null = propositionEntries.length
-        ? propositionEntries.map((entry: any, index: number) => {
-            const rawText =
-              typeof entry === "string"
-                ? entry
-                : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
-            const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
+      const propositionEntriesLookLikeLegacy =
+        !hasCollectionInFirstItem &&
+        propositionEntries.length > 0 &&
+        propositionEntries.every(
+          (entry: any) =>
+            entry &&
+            typeof entry === "object" &&
+            ("tipo" in entry || "type" in entry || "etiqueta" in entry || "label" in entry),
+        )
 
-            const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
-            const label =
-              typeof entry?.etiqueta === "string"
-                ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
-                  : getLabelForProposition(baseType, index)
+      if (propositionEntriesLookLikeLegacy) {
+        const newSubtopicId = `subtopic-${Date.now()}`
 
-            return {
-              id: `${newSubtopicId}-${index}`,
-              type: baseType,
-              label,
-              text: textValue,
-              audios: [],
-            }
-          })
-        : null
+        const propositions = createPropositionsFromCollection(
+          propositionEntries,
+          newSubtopicId,
+        )
+
+        updateThemeById(currentThemeId, (theme) => ({
+          ...theme,
+          subtopics: [
+            ...theme.subtopics,
+            {
+              id: newSubtopicId,
+              text: subtopicText,
+              propositions,
+            },
+          ],
+        }))
+        return
+      }
+
+      const additionalTextsFromFirst = hasCollectionInFirstItem
+        ? extractTextsFromCollection(subtopicInfo).filter((text) => text !== subtopicText)
+        : []
+      const additionalTexts = propositionEntries.flatMap((entry: any) => extractTextsFromCollection(entry))
+
+      const textsToCreate = [subtopicText, ...additionalTextsFromFirst, ...additionalTexts]
+        .map((text) => text.trim())
+        .filter((text, index, array) => text.length > 0 && array.indexOf(text) === index)
+
+      if (textsToCreate.length === 0) {
+        throw new Error("No se encontraron proposiciones válidas en el portapapeles")
+      }
+
+      const timestamp = Date.now()
+      const newSubtopics: Subtopic[] = textsToCreate.map((text, index) => ({
+        id: `subtopic-${timestamp}-${index}`,
+        text,
+        propositions: null,
+      }))
 
       updateThemeById(currentThemeId, (theme) => ({
         ...theme,
-        subtopics: [
-          ...theme.subtopics,
-          {
-            id: newSubtopicId,
-            text: subtopicInfo.texto,
-            propositions,
-          },
-        ],
+        subtopics: [...theme.subtopics, ...newSubtopics],
       }))
     } catch (error: any) {
       console.error("[v0] Error importing from clipboard:", error)
@@ -1112,7 +1334,7 @@ export default function PropositionsApp() {
                 variant="ghost"
                 size="icon"
                 onClick={importSubtopicFromClipboard}
-                title="Importar subtema desde portapapeles"
+                title="Importar subtemas y proposiciones desde portapapeles"
               >
                 <Plus className="w-5 h-5" />
               </Button>
