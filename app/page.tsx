@@ -27,6 +27,8 @@ interface Proposition {
   label: string
   text: string
   audios: Blob[]
+  groupId: string
+  order: number
 }
 
 interface Subtopic {
@@ -42,6 +44,90 @@ interface Theme {
 }
 
 type ViewState = "themes" | "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+
+const PROPOSITION_TYPE_LABELS: Record<PropositionType, string> = {
+  condicion: "Condición",
+  reciproco: "Recíproco",
+  inverso: "Inverso",
+  contrareciproco: "Contra-Recíproco",
+}
+
+const PROPOSITION_TYPE_ORDER: Record<PropositionType, number> = {
+  condicion: 0,
+  reciproco: 1,
+  inverso: 2,
+  contrareciproco: 3,
+}
+
+const mapIndexToType = (index: number): PropositionKind => {
+  switch (index) {
+    case 0:
+      return "condicion"
+    case 1:
+      return "reciproco"
+    case 2:
+      return "inverso"
+    case 3:
+      return "contrareciproco"
+    default:
+      return "custom"
+  }
+}
+
+const getLabelForProposition = (type: PropositionKind, index: number) => {
+  if (type !== "custom" && PROPOSITION_TYPE_LABELS[type]) {
+    return PROPOSITION_TYPE_LABELS[type as PropositionType]
+  }
+  return `Proposición ${index + 1}`
+}
+
+const getOrderForType = (type: PropositionKind, fallbackIndex: number) => {
+  if (type !== "custom" && PROPOSITION_TYPE_ORDER[type]) {
+    return PROPOSITION_TYPE_ORDER[type as PropositionType]
+  }
+  return fallbackIndex
+}
+
+const normalizeProposition = (
+  raw: any,
+  subtopicId: string,
+  propIndex: number,
+  audios: Blob[] = [],
+): Proposition => {
+  const type = (raw?.type ?? mapIndexToType(propIndex)) as PropositionKind
+  const label =
+    typeof raw?.label === "string"
+      ? raw.label
+      : getLabelForProposition(type, propIndex)
+
+  const fallbackGroupId =
+    typeof raw?.groupId === "string"
+      ? raw.groupId
+      : `${subtopicId}-group-${type !== "custom" ? type : propIndex}`
+
+  const order =
+    typeof raw?.order === "number"
+      ? raw.order
+      : getOrderForType(type, propIndex)
+
+  return {
+    id: raw?.id ?? `${subtopicId}-${propIndex}`,
+    type,
+    label,
+    text: raw?.text ?? "",
+    audios,
+    groupId: fallbackGroupId,
+    order,
+  }
+}
+
+const sortPropositionsByOrder = (items: Proposition[]) =>
+  [...items].sort((a, b) => {
+    if (a.order === b.order) {
+      return a.label.localeCompare(b.label)
+    }
+    return a.order - b.order
+  })
 
 export default function PropositionsApp() {
   const [themes, setThemes] = useState<Theme[]>([
@@ -59,6 +145,8 @@ export default function PropositionsApp() {
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
+  const [practiceSequence, setPracticeSequence] = useState<string[]>([])
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -73,36 +161,28 @@ export default function PropositionsApp() {
     currentSubtopicId && currentTheme
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
-  const propositions = currentSubtopic?.propositions || []
+  const subtopicPropositions = currentSubtopic?.propositions || []
 
-  const propositionTypeLabels: Record<PropositionType, string> = {
-    condicion: "Condición",
-    reciproco: "Recíproco",
-    inverso: "Inverso",
-    contrareciproco: "Contra-Recíproco",
-  }
-
-  const mapIndexToType = (index: number): PropositionKind => {
-    switch (index) {
-      case 0:
-        return "condicion"
-      case 1:
-        return "reciproco"
-      case 2:
-        return "inverso"
-      case 3:
-        return "contrareciproco"
-      default:
-        return "custom"
+  const groupedPropositions = useMemo(() => {
+    if (!currentSubtopic?.propositions) {
+      return [] as { groupId: string; propositions: Proposition[] }[]
     }
-  }
 
-  const getLabelForProposition = (type: PropositionKind, index: number) => {
-    if (type !== "custom" && propositionTypeLabels[type]) {
-      return propositionTypeLabels[type as PropositionType]
+    const groups = new Map<string, Proposition[]>()
+
+    for (const proposition of currentSubtopic.propositions) {
+      const groupId = proposition.groupId
+      if (!groups.has(groupId)) {
+        groups.set(groupId, [])
+      }
+      groups.get(groupId)!.push(proposition)
     }
-    return `Proposición ${index + 1}`
-  }
+
+    return Array.from(groups.entries()).map(([groupId, propositions]) => ({
+      groupId,
+      propositions: sortPropositionsByOrder(propositions),
+    }))
+  }, [currentSubtopic?.propositions])
 
   const updateThemeById = (themeId: string, updater: (theme: Theme) => Theme) => {
     setThemes((prev) => prev.map((theme) => (theme.id === themeId ? updater(theme) : theme)))
@@ -333,16 +413,8 @@ export default function PropositionsApp() {
 
             const audiosGrouped = await loadAudios(subtopic.id)
             const propositionsWithAudios: Proposition[] = subtopic.propositions.map(
-              (prop: any, propIndex: number) => {
-                const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
-                return {
-                  id: prop.id ?? `${subtopic.id}-${propIndex}`,
-                  type,
-                  label: prop.label ?? getLabelForProposition(type, propIndex),
-                  text: prop.text ?? "",
-                  audios: audiosGrouped[propIndex] || [],
-                }
-              },
+              (prop: any, propIndex: number) =>
+                normalizeProposition(prop, subtopic.id, propIndex, audiosGrouped[propIndex] || []),
             )
 
             return {
@@ -378,16 +450,8 @@ export default function PropositionsApp() {
 
               const audiosGrouped = await loadAudios(subtopic.id)
               const propositionsWithAudios: Proposition[] = subtopic.propositions.map(
-                (prop: any, propIndex: number) => {
-                  const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
-                  return {
-                    id: prop.id ?? `${subtopic.id}-${propIndex}`,
-                    type,
-                    label: prop.label ?? getLabelForProposition(type, propIndex),
-                    text: prop.text ?? "",
-                    audios: audiosGrouped[propIndex] || [],
-                  }
-                },
+                (prop: any, propIndex: number) =>
+                  normalizeProposition(prop, subtopic.id, propIndex, audiosGrouped[propIndex] || []),
               )
 
               return {
@@ -459,15 +523,7 @@ export default function PropositionsApp() {
                   audioIndex++
                 }
 
-                const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
-
-                return {
-                  id: prop.id ?? `${subtopic.id}-${propIndex}`,
-                  type,
-                  label: prop.label ?? getLabelForProposition(type, propIndex),
-                  text: prop.text ?? "",
-                  audios,
-                }
+                return normalizeProposition(prop, subtopic.id, propIndex, audios)
               }),
             )
 
@@ -514,15 +570,7 @@ export default function PropositionsApp() {
                     audioIndex++
                   }
 
-                  const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
-
-                  return {
-                    id: prop.id ?? `${subtopic.id}-${propIndex}`,
-                    type,
-                    label: prop.label ?? getLabelForProposition(type, propIndex),
-                    text: prop.text ?? "",
-                    audios,
-                  }
+                  return normalizeProposition(prop, subtopic.id, propIndex, audios)
                 }),
               )
 
@@ -573,6 +621,8 @@ export default function PropositionsApp() {
                   type: prop.type,
                   label: prop.label,
                   text: prop.text,
+                  groupId: prop.groupId,
+                  order: prop.order,
                 }))
               : null,
           })),
@@ -614,6 +664,8 @@ export default function PropositionsApp() {
                 type: prop.type,
                 label: prop.label,
                 text: prop.text,
+                groupId: prop.groupId,
+                order: prop.order,
               }))
             : null,
         })),
@@ -742,21 +794,30 @@ export default function PropositionsApp() {
             const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
 
             const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType || mapIndexToType(index)
+            const baseType = incomingType ?? "condicion"
             const label =
               typeof entry?.etiqueta === "string"
                 ? entry.etiqueta
-                : incomingType && incomingType !== "custom" && propositionTypeLabels[incomingType as PropositionType]
-                  ? propositionTypeLabels[incomingType as PropositionType]
+                : baseType !== "custom" && PROPOSITION_TYPE_LABELS[baseType as PropositionType]
+                  ? PROPOSITION_TYPE_LABELS[baseType as PropositionType]
                   : getLabelForProposition(baseType, index)
 
-            return {
-              id: `${newSubtopicId}-${index}`,
-              type: baseType,
-              label,
-              text: textValue,
-              audios: [],
-            }
+            return normalizeProposition(
+              {
+                id: entry?.id ?? `${newSubtopicId}-group-${index}-${baseType}`,
+                type: baseType,
+                label,
+                text: textValue,
+                groupId: entry?.groupId ?? `${newSubtopicId}-group-${index}`,
+                order:
+                  typeof entry?.order === "number"
+                    ? entry.order
+                    : getOrderForType(baseType, index),
+              },
+              newSubtopicId,
+              index,
+              [],
+            )
           })
         : null
 
@@ -809,85 +870,149 @@ export default function PropositionsApp() {
     if (!currentThemeId) return
 
     const theme = themes.find((t) => t.id === currentThemeId)
-    const hasSubtopic = theme?.subtopics.some((subtopic) => subtopic.id === subtopicId)
+    const subtopic = theme?.subtopics.find((item) => item.id === subtopicId)
 
-    if (!hasSubtopic) {
+    if (!subtopic) {
       return
     }
 
     setCurrentSubtopicId(subtopicId)
-    setCurrentIndex(0)
-    setViewState("overview")
+
+    if (subtopic.propositions && subtopic.propositions.length > 0) {
+      const firstGroupId = subtopic.propositions[0].groupId
+      const groupSequence = sortPropositionsByOrder(
+        subtopic.propositions.filter((prop) => prop.groupId === firstGroupId),
+      )
+
+      setActiveGroupId(firstGroupId)
+      setPracticeSequence(groupSequence.map((prop) => prop.id))
+      setCurrentIndex(0)
+      setCountdown(5)
+      setViewState("recording")
+    } else {
+      setActiveGroupId(null)
+      setPracticeSequence([])
+      setCurrentIndex(0)
+      setViewState("overview")
+    }
   }
 
-  const evaluatePropositions = async (subtopicId: string) => {
+  const generatePropositionsForGroup = async (subtopicId: string, targetGroupId?: string) => {
     if (!currentThemeId) return
 
     const theme = themes.find((t) => t.id === currentThemeId)
     const subtopic = theme?.subtopics.find((s) => s.id === subtopicId)
-    if (!subtopic || !subtopic.text.trim()) return
+    if (!subtopic) return
 
-    console.log("[v0] Evaluating propositions for subtopic:", subtopic)
-    console.log("[v0] Subtopic has propositions?", !!subtopic.propositions)
+    const existingPropositions = subtopic.propositions ?? []
 
-    if (subtopic.propositions && subtopic.propositions.length > 0) {
-      console.log("[v0] Propositions already exist, going to interface")
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setViewState("overview")
+    const determineGroupId = () => {
+      if (targetGroupId) return targetGroupId
+      if (existingPropositions.length > 0) {
+        return existingPropositions[0].groupId
+      }
+      return `${subtopic.id}-group-0`
+    }
+
+    const groupId = determineGroupId()
+    const groupPropositions = existingPropositions.filter((prop) => prop.groupId === groupId)
+    const baseCandidate = groupPropositions.find((prop) => prop.type === "condicion") ?? groupPropositions.find((prop) => prop.order === 0)
+
+    const fallbackGroupText = groupPropositions[0]?.text?.trim() ?? ""
+    const baseText =
+      baseCandidate?.text?.trim() || fallbackGroupText || (existingPropositions.length === 0 ? subtopic.text.trim() : "")
+
+    if (!baseText) {
+      alert("No hay una proposición base para generar resultados.")
       return
     }
 
-    console.log("[v0] No propositions found, generating with Groq...")
     setIsGenerating(true)
+
     try {
-      const result = await generatePropositions(subtopic.text)
+      const result = await generatePropositions(baseText)
 
       if ("error" in result) {
         throw new Error(result.error)
       }
 
-      console.log("[v0] Generated propositions:", result)
+      const normalizedBase: Proposition = baseCandidate
+        ? {
+            ...baseCandidate,
+            type: "condicion",
+            label: baseCandidate.label || PROPOSITION_TYPE_LABELS.condicion,
+            groupId,
+            order: PROPOSITION_TYPE_ORDER.condicion,
+            text: baseText,
+          }
+        : normalizeProposition(
+            {
+              id: `${groupId}-condicion`,
+              type: "condicion",
+              label: PROPOSITION_TYPE_LABELS.condicion,
+              text: baseText,
+              groupId,
+              order: PROPOSITION_TYPE_ORDER.condicion,
+            },
+            subtopic.id,
+            0,
+            [],
+          )
 
-      const newPropositions: Proposition[] = [
-        {
-          id: `${subtopic.id}-condicion`,
-          type: "condicion",
-          label: propositionTypeLabels.condicion,
-          text: subtopic.text,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-reciproco`,
-          type: "reciproco",
-          label: propositionTypeLabels.reciproco,
-          text: result.reciproco,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-inverso`,
-          type: "inverso",
-          label: propositionTypeLabels.inverso,
-          text: result.inverso,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-contrareciproco`,
-          type: "contrareciproco",
-          label: propositionTypeLabels.contrareciproco,
-          text: result.contrareciproco,
-          audios: [],
-        },
-      ]
+      const derivedTypes: PropositionType[] = ["reciproco", "inverso", "contrareciproco"]
+      const derivedPropositions = derivedTypes.map((type, index) =>
+        normalizeProposition(
+          {
+            id: `${groupId}-${type}`,
+            type,
+            label: PROPOSITION_TYPE_LABELS[type],
+            text: (result as any)[type],
+            groupId,
+            order: PROPOSITION_TYPE_ORDER[type],
+          },
+          subtopic.id,
+          existingPropositions.length + index + 1,
+          [],
+        ),
+      )
+
+      const updatedGroup = sortPropositionsByOrder([normalizedBase, ...derivedPropositions])
+
+      const newPropositions: Proposition[] = []
+      let groupInserted = false
+
+      if (existingPropositions.length === 0 && !baseCandidate) {
+        groupInserted = true
+        newPropositions.push(...updatedGroup)
+      } else {
+        for (const proposition of existingPropositions) {
+          if (proposition.groupId === groupId) {
+            if (!groupInserted) {
+              newPropositions.push(...updatedGroup)
+              groupInserted = true
+            }
+            continue
+          }
+          newPropositions.push(proposition)
+        }
+      }
+
+      if (!groupInserted) {
+        newPropositions.push(...updatedGroup)
+      }
 
       updateSubtopicById(currentThemeId, subtopicId, (current) => ({
         ...current,
         propositions: newPropositions,
       }))
 
+      const sequence = updatedGroup.map((prop) => prop.id)
       setCurrentSubtopicId(subtopicId)
+      setActiveGroupId(groupId)
+      setPracticeSequence(sequence)
       setCurrentIndex(0)
-      setViewState("overview")
+      setCountdown(5)
+      setViewState("recording")
     } catch (error) {
       console.error("[v0] Error generating propositions:", error)
       alert("Error al generar proposiciones. Por favor, intenta de nuevo.")
@@ -910,20 +1035,26 @@ export default function PropositionsApp() {
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
 
-        if (currentThemeId && currentSubtopicId) {
+        if (currentThemeId && currentSubtopicId && practiceSequence[currentIndex]) {
+          const activePropositionId = practiceSequence[currentIndex]
+
           updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
             if (!subtopic.propositions) {
               return subtopic
             }
 
-            if (!subtopic.propositions[currentIndex]) {
+            const targetIndex = subtopic.propositions.findIndex(
+              (prop) => prop.id === activePropositionId,
+            )
+
+            if (targetIndex === -1) {
               return subtopic
             }
 
             const newPropositions = [...subtopic.propositions]
-            newPropositions[currentIndex] = {
-              ...newPropositions[currentIndex],
-              audios: [...newPropositions[currentIndex].audios, audioBlob],
+            newPropositions[targetIndex] = {
+              ...newPropositions[targetIndex],
+              audios: [...newPropositions[targetIndex].audios, audioBlob],
             }
 
             return {
@@ -968,7 +1099,7 @@ export default function PropositionsApp() {
   }, [viewState, countdown])
 
   const playAudio = () => {
-    const audios = propositions[currentIndex]?.audios || []
+    const audios = currentProposition?.audios || []
     if (audios.length > 0) {
       const latestAudio = audios[audios.length - 1]
       const audioUrl = URL.createObjectURL(latestAudio)
@@ -986,7 +1117,7 @@ export default function PropositionsApp() {
   }
 
   const handleContinue = () => {
-    if (currentIndex < propositions.length - 1) {
+    if (currentIndex < practiceSequence.length - 1) {
       setCurrentIndex(currentIndex + 1)
       setViewState("recording")
       setCountdown(5)
@@ -1003,8 +1134,9 @@ export default function PropositionsApp() {
     }, 5000)
   }
 
-  const playRecordedAudio = (propIndex: number) => {
-    const audios = propositions[propIndex]?.audios || []
+  const playRecordedAudio = (propositionId: string) => {
+    const target = currentSubtopic?.propositions?.find((prop) => prop.id === propositionId)
+    const audios = target?.audios || []
     if (audios.length > 0) {
       const latestAudio = audios[audios.length - 1]
       const audioUrl = URL.createObjectURL(latestAudio)
@@ -1014,19 +1146,32 @@ export default function PropositionsApp() {
     }
   }
 
-  const goToProposition = (index: number) => {
-    if (!propositions[index]) {
+  const startPracticeForGroup = (groupId: string) => {
+    if (!currentSubtopic?.propositions) {
       return
     }
 
-    setCurrentIndex(index)
-    setViewState("recording")
+    const groupSequence = sortPropositionsByOrder(
+      currentSubtopic.propositions.filter((prop) => prop.groupId === groupId),
+    )
+
+    if (groupSequence.length === 0) {
+      return
+    }
+
+    setActiveGroupId(groupId)
+    setPracticeSequence(groupSequence.map((prop) => prop.id))
+    setCurrentIndex(0)
     setCountdown(5)
+    setViewState("recording")
   }
 
   const goToHome = () => {
     setViewState("themes")
     setCurrentSubtopicId(null)
+    setActiveGroupId(null)
+    setPracticeSequence([])
+    setCurrentIndex(0)
     setIsRecording(false)
     if (audioRef.current) {
       audioRef.current.pause()
@@ -1160,21 +1305,21 @@ export default function PropositionsApp() {
                     type="text"
                     value={subtopic.text}
                     onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                    placeholder="Ingresa una condición o teorema..."
+                    placeholder="Ingresa el nombre del subtema..."
                     className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                   <Button
                     onClick={() =>
-                      subtopic.propositions
+                      subtopic.propositions && subtopic.propositions.length > 0
                         ? openSubtopicDetail(subtopic.id)
-                        : evaluatePropositions(subtopic.id)
+                        : generatePropositionsForGroup(subtopic.id)
                     }
                     disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
                     className="whitespace-nowrap"
                   >
                     {isGenerating
                       ? "Generando..."
-                      : subtopic.propositions
+                      : subtopic.propositions && subtopic.propositions.length > 0
                         ? "Ver subtema"
                         : "Generar proposiciones"}
                   </Button>
@@ -1254,72 +1399,136 @@ export default function PropositionsApp() {
             </div>
           </Card>
 
-          {propositions.length === 0 ? (
+          {groupedPropositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
-                Este subtema aún no tiene proposiciones generadas.
+                Este subtema aún no tiene proposiciones registradas.
               </p>
               <Button
-                onClick={() => evaluatePropositions(currentSubtopic.id)}
+                onClick={() => generatePropositionsForGroup(currentSubtopic.id)}
                 disabled={isGenerating || !currentSubtopic.text.trim()}
               >
                 {isGenerating ? "Generando..." : "Generar proposiciones"}
               </Button>
             </Card>
           ) : (
-            <>
-              <Card className="p-8 space-y-6">
-                {propositions.map((prop, index) => (
-                  <div
-                    key={prop.id}
-                    className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="flex-1 space-y-2">
-                      <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                        {prop.label}
-                      </p>
-                      <div className="text-lg leading-relaxed text-foreground break-words">
-                        <MathText text={prop.text} />
+            <div className="space-y-6">
+              {groupedPropositions.map((group) => {
+                const baseProposition =
+                  group.propositions.find((prop) => prop.type === "condicion") ?? group.propositions[0]
+                const complementaryPropositions = group.propositions.filter(
+                  (prop) => prop.id !== baseProposition?.id,
+                )
+
+                return (
+                  <Card key={group.groupId} className="p-6 space-y-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-2 flex-1">
+                        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                          {baseProposition?.label ?? PROPOSITION_TYPE_LABELS.condicion}
+                        </p>
+                        <div className="text-lg leading-relaxed text-foreground break-words">
+                          <MathText text={baseProposition?.text ?? ""} />
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {prop.audios.length > 0 && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {baseProposition?.audios?.length ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => playRecordedAudio(baseProposition.id)}
+                            className="hover:bg-primary/10"
+                            title="Reproducir último audio"
+                          >
+                            <Play className="w-5 h-5" />
+                          </Button>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => playRecordedAudio(index)}
+                          onClick={() => startPracticeForGroup(group.groupId)}
                           className="hover:bg-primary/10"
-                          title="Reproducir último audio"
+                          title="Practicar secuencia"
+                          disabled={!baseProposition?.text.trim()}
                         >
-                          <Play className="w-5 h-5" />
+                          <Headphones className="w-5 h-5" />
                         </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pl-4 border-l border-dashed">
+                      {complementaryPropositions.length > 0 ? (
+                        complementaryPropositions.map((prop) => (
+                          <div
+                            key={prop.id}
+                            className="flex items-start justify-between gap-4 text-sm"
+                          >
+                            <div className="space-y-1 flex-1">
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                {prop.label}
+                              </p>
+                              <div className="text-foreground leading-relaxed">
+                                <MathText text={prop.text} />
+                              </div>
+                            </div>
+                            {prop.audios.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => playRecordedAudio(prop.id)}
+                                className="hover:bg-primary/10"
+                                title="Reproducir último audio"
+                              >
+                                <Play className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Genera el recíproco, inverso y contra-recíproco para trabajar la secuencia
+                          completa.
+                        </p>
                       )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-2">
                       <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => goToProposition(index)}
-                        className="hover:bg-primary/10"
-                        title="Practicar esta proposición"
+                        variant="outline"
+                        onClick={() => generatePropositionsForGroup(currentSubtopic.id, group.groupId)}
+                        disabled={isGenerating}
                       >
-                        <Headphones className="w-5 h-5" />
+                        {isGenerating
+                          ? "Generando..."
+                          : complementaryPropositions.length > 0
+                            ? "Regenerar complementarias"
+                            : "Generar complementarias"}
+                      </Button>
+                      <Button
+                        onClick={() => startPracticeForGroup(group.groupId)}
+                        disabled={!baseProposition?.text.trim()}
+                      >
+                        Practicar secuencia
                       </Button>
                     </div>
-                  </div>
-                ))}
-              </Card>
-              <div className="flex justify-center">
-                <Button size="lg" onClick={() => goToProposition(0)}>
-                  Iniciar práctica guiada
-                </Button>
-              </div>
-            </>
+                  </Card>
+                )
+              })}
+            </div>
           )}
         </div>
       </div>
     )
   }
 
-  const currentProposition = propositions[currentIndex]
+  const currentPropositionId =
+    practiceSequence.length > 0 && currentIndex < practiceSequence.length
+      ? practiceSequence[currentIndex]
+      : null
+  const currentProposition =
+    currentPropositionId && currentSubtopic?.propositions
+      ? currentSubtopic.propositions.find((prop) => prop.id === currentPropositionId) ?? null
+      : null
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-8">
