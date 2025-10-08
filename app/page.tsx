@@ -3,10 +3,17 @@
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft } from "lucide-react"
+import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft, ArrowRight } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { generatePropositions } from "./actions"
-import { saveSubtopics, loadSubtopics, saveAudio, loadAudios } from "@/lib/storage"
+import {
+  saveSubtopics,
+  loadSubtopics,
+  saveAudio,
+  loadAudios,
+  saveThemeName,
+  loadThemeName,
+} from "@/lib/storage"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -16,6 +23,7 @@ import {
   writeBlobFile,
   readBlobFile,
 } from "@/lib/file-system"
+import { LatexText } from "@/components/latex-text"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 
@@ -43,17 +51,25 @@ interface SubtopicData {
     | null
 }
 
-type ViewState = "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+type ViewState =
+  | "home"
+  | "subtopics"
+  | "overview"
+  | "recording"
+  | "listening"
+  | "countdown"
+  | "prompt"
 
 export default function PropositionsApp() {
   const [subtopics, setSubtopics] = useState<Subtopic[]>([
     { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
   ])
   const [currentSubtopicId, setCurrentSubtopicId] = useState<string | null>(null)
-  const [viewState, setViewState] = useState<ViewState>("subtopics")
+  const [viewState, setViewState] = useState<ViewState>("home")
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
+  const [themeName, setThemeName] = useState("")
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -77,7 +93,7 @@ export default function PropositionsApp() {
         return
       }
 
-      if (e.key === "g" && viewState === "subtopics") {
+      if (e.key === "g" && (viewState === "subtopics" || viewState === "home")) {
         e.preventDefault()
         setShowSettingsModal(true)
         return
@@ -122,6 +138,11 @@ export default function PropositionsApp() {
       console.log("[v0] Loading from IndexedDB...")
       // Fallback to IndexedDB
       const loadedSubtopics = await loadSubtopics()
+      const storedThemeName = await loadThemeName()
+
+      if (storedThemeName) {
+        setThemeName(storedThemeName)
+      }
 
       console.log("[v0] Loaded subtopics from IndexedDB:", loadedSubtopics)
 
@@ -177,6 +198,11 @@ export default function PropositionsApp() {
 
       console.log("[v0] Found subtopics in file system:", data)
 
+      const metadata = await readJSONFile(handle, "metadata.json")
+      if (metadata && typeof metadata.themeName === "string") {
+        setThemeName(metadata.themeName)
+      }
+
       // Load subtopics with audios
       const subtopicsWithAudios: Subtopic[] = await Promise.all(
         data.map(async (subtopic: any) => {
@@ -224,7 +250,7 @@ export default function PropositionsApp() {
     if (!isLoadingData) {
       saveData()
     }
-  }, [subtopics, isLoadingData])
+  }, [subtopics, isLoadingData, themeName])
 
   const saveData = async () => {
     try {
@@ -245,6 +271,7 @@ export default function PropositionsApp() {
         }))
 
         await saveSubtopics(subtopicsToSave)
+        await saveThemeName(themeName)
 
         // Save audio blobs separately
         for (const subtopic of subtopics) {
@@ -278,6 +305,7 @@ export default function PropositionsApp() {
       }))
 
       await writeJSONFile(handle, "subtopics.json", subtopicsData)
+      await writeJSONFile(handle, "metadata.json", { themeName })
 
       // Save audio files
       for (const subtopic of subtopics) {
@@ -327,6 +355,87 @@ export default function PropositionsApp() {
       propositions: null,
     }
     setSubtopics([...subtopics, newSubtopic])
+  }
+
+  const handleSelectSubtopic = (subtopic: Subtopic) => {
+    setCurrentSubtopicId(subtopic.id)
+    setCurrentIndex(0)
+    if (subtopic.propositions && subtopic.propositions.length > 0) {
+      setViewState("overview")
+    } else {
+      setViewState("subtopics")
+    }
+  }
+
+  const handleImportFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        alert("No se puede acceder al portapapeles desde este navegador.")
+        return
+      }
+
+      const rawText = await navigator.clipboard.readText()
+      const trimmed = rawText.trim()
+
+      if (!trimmed) {
+        alert("El portapapeles está vacío.")
+        return
+      }
+
+      let normalized = trimmed
+      if (normalized.startsWith("{{")) {
+        normalized = "[" + normalized.slice(2)
+      }
+      if (normalized.endsWith("}}")) {
+        normalized = normalized.slice(0, -2) + "]"
+      }
+
+      let parsed: any
+      try {
+        parsed = JSON.parse(normalized)
+      } catch (error) {
+        console.error("[v0] Error parsing clipboard JSON:", error)
+        alert("No se pudo interpretar el contenido del portapapeles.")
+        return
+      }
+
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        alert("El contenido del portapapeles no tiene el formato esperado.")
+        return
+      }
+
+      const [first, ...rest] = parsed
+      const name = (first?.texto ?? first?.text ?? "").trim()
+
+      if (!name) {
+        alert("No se encontró el nombre del subtema en el portapapeles.")
+        return
+      }
+
+      const typeOrder: PropositionType[] = ["condicion", "reciproco", "inverso", "contrareciproco"]
+      const propositionsFromClipboard: Proposition[] = rest
+        .map((item: any, index: number) => {
+          const text = (item?.texto ?? item?.text ?? "").trim()
+          if (!text) return null
+          const type = typeOrder[index % typeOrder.length]
+          return { type, text, audios: [] as Blob[] }
+        })
+        .filter((item): item is Proposition => item !== null)
+
+      const newSubtopic: Subtopic = {
+        id: Date.now().toString(),
+        text: name,
+        propositions: propositionsFromClipboard.length > 0 ? propositionsFromClipboard : null,
+      }
+
+      setSubtopics([...subtopics, newSubtopic])
+      setCurrentSubtopicId(newSubtopic.id)
+      setCurrentIndex(0)
+      setViewState(newSubtopic.propositions ? "overview" : "subtopics")
+    } catch (error) {
+      console.error("[v0] Error importing from clipboard:", error)
+      alert("Ocurrió un error al importar el subtema.")
+    }
   }
 
   const updateSubtopicText = (id: string, text: string) => {
@@ -491,7 +600,7 @@ export default function PropositionsApp() {
   }
 
   const goToHome = () => {
-    setViewState("subtopics")
+    setViewState("home")
     setCurrentSubtopicId(null)
     setIsRecording(false)
     if (audioRef.current) {
@@ -500,12 +609,137 @@ export default function PropositionsApp() {
     }
   }
 
+  if (viewState === "home") {
+    return (
+      <div className="min-h-screen bg-background p-8">
+        <div className="max-w-5xl mx-auto space-y-10">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="w-full md:max-w-xl space-y-2">
+              <label className="text-sm font-medium text-muted-foreground" htmlFor="theme-name">
+                Tema
+              </label>
+              <input
+                id="theme-name"
+                type="text"
+                value={themeName}
+                onChange={(event) => setThemeName(event.target.value)}
+                placeholder="Ingresa nombre tema"
+                className="w-full px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {isFileSystemSupported() && !useFileSystem && (
+                <Button variant="outline" onClick={activateFileSystemPersistence}>
+                  Activar persistencia de archivos
+                </Button>
+              )}
+              {useFileSystem ? (
+                <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-primary/10">
+                  📁 Persistencia de archivos activa
+                </span>
+              ) : (
+                <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-muted">
+                  💾 Guardado en navegador
+                </span>
+              )}
+              <Button variant="outline" onClick={() => setViewState("subtopics")} className="bg-transparent">
+                Gestionar subtemas
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleImportFromClipboard}
+                className="hover:bg-primary/10"
+                title="Importar desde portapapeles"
+              >
+                <Plus className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSettingsModal(true)}
+                className="hover:bg-primary/10"
+                title="Ajustes (g)"
+              >
+                <Settings className="w-5 h-5" />
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h2 className="text-2xl font-semibold text-balance">Subtemas</h2>
+            {isLoadingData ? (
+              <Card className="p-12 text-center">
+                <p className="text-muted-foreground">Cargando datos...</p>
+              </Card>
+            ) : subtopics.length === 0 ? (
+              <Card className="p-12 text-center space-y-2">
+                <p className="text-lg font-medium text-foreground">Sin subtemas aún</p>
+                <p className="text-sm text-muted-foreground">
+                  Usa el botón “+” para importar un subtema desde el portapapeles o gestiona los subtemas manualmente.
+                </p>
+              </Card>
+            ) : (
+              <Card className="p-0 divide-y">
+                {subtopics.map((subtopic) => {
+                  const displayText = subtopic.text.trim() ? subtopic.text : "Subtema sin nombre"
+                  return (
+                    <button
+                      key={subtopic.id}
+                      onClick={() => handleSelectSubtopic(subtopic)}
+                      className="w-full text-left p-6 transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subtema</p>
+                          <div className="text-lg font-semibold leading-relaxed text-foreground">
+                            <LatexText text={displayText} />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm">
+                          <span className={subtopic.propositions ? "text-primary" : "text-muted-foreground"}>
+                            {subtopic.propositions
+                              ? `${subtopic.propositions.length} proposiciones listas`
+                              : "Pendiente de evaluar"}
+                          </span>
+                          <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </Card>
+            )}
+          </div>
+
+          <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+        </div>
+      </div>
+    )
+  }
+
   if (viewState === "subtopics") {
     return (
       <div className="min-h-screen bg-background p-8">
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between mb-8">
-            <h1 className="text-3xl font-bold text-balance">Subtemas</h1>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setViewState("home")}
+                className="hover:bg-primary/10"
+                title="Volver al tema"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+              <div>
+                <h1 className="text-3xl font-bold text-balance">Subtemas</h1>
+                <p className="text-sm text-muted-foreground">
+                  {themeName ? `Tema: ${themeName}` : "Tema sin título"}
+                </p>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               {isFileSystemSupported() && !useFileSystem && (
                 <Button variant="outline" onClick={activateFileSystemPersistence}>
@@ -612,9 +846,9 @@ export default function PropositionsApp() {
                     {index === 2 && "Inverso"}
                     {index === 3 && "Contra-Recíproco"}
                   </p>
-                  <p className="text-lg leading-relaxed text-foreground font-mono tracking-wide break-words">
-                    {prop.text}
-                  </p>
+                  <div className="text-lg leading-relaxed text-foreground font-mono tracking-wide break-words">
+                    <LatexText text={prop.text} />
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {prop.audios.length > 0 && (
@@ -680,9 +914,9 @@ export default function PropositionsApp() {
                 {currentIndex === 2 && "Inverso"}
                 {currentIndex === 3 && "Contra-Recíproco"}
               </p>
-              <p className="text-2xl leading-relaxed font-mono tracking-wide text-foreground break-words">
-                {currentProposition?.text}
-              </p>
+              <div className="text-2xl leading-relaxed font-mono tracking-wide text-foreground break-words">
+                <LatexText text={currentProposition?.text ?? ""} />
+              </div>
             </div>
             <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
           </div>

@@ -31,10 +31,7 @@ interface PropositionsDB extends DBSchema {
   }
   settings: {
     key: string
-    value: {
-      groqModel: string
-      groqPrompt: string
-    }
+    value: any
   }
 }
 
@@ -131,6 +128,17 @@ export async function saveSettings(settings: { groqModel: string; groqPrompt: st
 export async function loadSettings() {
   const db = await getDB()
   return await db.get("settings", "config")
+}
+
+export async function saveThemeName(themeName: string) {
+  const db = await getDB()
+  await db.put("settings", { themeName }, "theme")
+}
+
+export async function loadThemeName() {
+  const db = await getDB()
+  const record = await db.get("settings", "theme")
+  return record?.themeName ?? ""
 }
 
 // Clear all data
