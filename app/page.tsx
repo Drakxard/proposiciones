@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, Fragment } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft } from "lucide-react"
@@ -17,12 +17,13 @@ import {
   readBlobFile,
 } from "@/lib/file-system"
 
-type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
+type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco" | "custom"
 
 interface Proposition {
   type: PropositionType
   text: string
   audios: Blob[]
+  label?: string
 }
 
 interface Subtopic {
@@ -39,21 +40,57 @@ interface SubtopicData {
         type: PropositionType
         text: string
         audioCount: number
+        label?: string
       }[]
     | null
 }
 
-type ViewState = "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+type ViewState =
+  | "home"
+  | "subtopics"
+  | "overview"
+  | "recording"
+  | "listening"
+  | "countdown"
+  | "prompt"
+
+const defaultPropositionLabels = ["Condición", "Recíproco", "Inverso", "Contra-Recíproco"]
+
+const renderTextWithLatex = (text: string) => {
+  const parts = text.split(/(\$[^$]+\$)/g)
+
+  return parts.map((part, index) => {
+    if (part.startsWith("$") && part.endsWith("$")) {
+      const content = part.slice(1, -1)
+      return (
+        <span key={`math-${index}`} className="font-semibold text-primary">
+          {content}
+        </span>
+      )
+    }
+
+    return (
+      <Fragment key={`text-${index}`}>
+        {part}
+      </Fragment>
+    )
+  })
+}
+
+const getPropositionLabel = (prop: Proposition | undefined, index: number) => {
+  if (!prop) return ""
+  if (prop.label) return prop.label
+  return defaultPropositionLabels[index] ?? `Proposición ${index + 1}`
+}
 
 export default function PropositionsApp() {
-  const [subtopics, setSubtopics] = useState<Subtopic[]>([
-    { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
-  ])
+  const [subtopics, setSubtopics] = useState<Subtopic[]>([])
   const [currentSubtopicId, setCurrentSubtopicId] = useState<string | null>(null)
-  const [viewState, setViewState] = useState<ViewState>("subtopics")
+  const [viewState, setViewState] = useState<ViewState>("home")
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
+  const [themeName, setThemeName] = useState("")
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -98,8 +135,23 @@ export default function PropositionsApp() {
   }, [viewState, mediaRecorderRef.current])
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const storedTheme = window.localStorage.getItem("themeName")
+      if (storedTheme) {
+        setThemeName(storedTheme)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     loadPersistedData()
   }, [])
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("themeName", themeName)
+    }
+  }, [themeName])
 
   const loadPersistedData = async () => {
     try {
@@ -170,16 +222,34 @@ export default function PropositionsApp() {
     try {
       console.log("[v0] Reading subtopics.json from file system...")
       const data = await readJSONFile(handle, "subtopics.json")
-      if (!data || !Array.isArray(data)) {
+      if (!data) {
         console.log("[v0] No valid subtopics.json found")
         return
       }
 
-      console.log("[v0] Found subtopics in file system:", data)
+      let themeFromFile = ""
+      let subtopicsData: any[] = []
+
+      if (Array.isArray(data)) {
+        subtopicsData = data
+      } else if (Array.isArray(data?.subtopics)) {
+        subtopicsData = data.subtopics
+        themeFromFile = data.themeName ?? ""
+      }
+
+      console.log("[v0] Found subtopics in file system:", subtopicsData)
+
+      if (themeFromFile) {
+        setThemeName(themeFromFile)
+      }
+
+      if (subtopicsData.length === 0) {
+        return
+      }
 
       // Load subtopics with audios
       const subtopicsWithAudios: Subtopic[] = await Promise.all(
-        data.map(async (subtopic: any) => {
+        subtopicsData.map(async (subtopic: any) => {
           if (!subtopic.propositions) {
             return subtopic
           }
@@ -202,6 +272,7 @@ export default function PropositionsApp() {
               return {
                 ...prop,
                 audios,
+                label: prop.label,
               }
             }),
           )
@@ -224,7 +295,7 @@ export default function PropositionsApp() {
     if (!isLoadingData) {
       saveData()
     }
-  }, [subtopics, isLoadingData])
+  }, [subtopics, themeName, isLoadingData])
 
   const saveData = async () => {
     try {
@@ -240,6 +311,7 @@ export default function PropositionsApp() {
                 type: prop.type,
                 text: prop.text,
                 audios: [],
+                label: prop.label,
               }))
             : null,
         }))
@@ -273,11 +345,15 @@ export default function PropositionsApp() {
           ? subtopic.propositions.map((prop) => ({
               type: prop.type,
               text: prop.text,
+              label: prop.label,
             }))
           : null,
       }))
 
-      await writeJSONFile(handle, "subtopics.json", subtopicsData)
+      await writeJSONFile(handle, "subtopics.json", {
+        themeName,
+        subtopics: subtopicsData,
+      })
 
       // Save audio files
       for (const subtopic of subtopics) {
@@ -361,10 +437,10 @@ export default function PropositionsApp() {
       console.log("[v0] Generated propositions:", result)
 
       const newPropositions: Proposition[] = [
-        { type: "condicion", text: subtopic.text, audios: [] },
-        { type: "reciproco", text: result.reciproco, audios: [] },
-        { type: "inverso", text: result.inverso, audios: [] },
-        { type: "contrareciproco", text: result.contrareciproco, audios: [] },
+        { type: "condicion", text: subtopic.text, audios: [], label: "Condición" },
+        { type: "reciproco", text: result.reciproco, audios: [], label: "Recíproco" },
+        { type: "inverso", text: result.inverso, audios: [], label: "Inverso" },
+        { type: "contrareciproco", text: result.contrareciproco, audios: [], label: "Contra-Recíproco" },
       ]
 
       setSubtopics(subtopics.map((s) => (s.id === subtopicId ? { ...s, propositions: newPropositions } : s)))
@@ -491,7 +567,7 @@ export default function PropositionsApp() {
   }
 
   const goToHome = () => {
-    setViewState("subtopics")
+    setViewState("home")
     setCurrentSubtopicId(null)
     setIsRecording(false)
     if (audioRef.current) {
@@ -500,9 +576,104 @@ export default function PropositionsApp() {
     }
   }
 
+  const importFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        alert("El portapapeles no está disponible en este navegador.")
+        return
+      }
+
+      const rawText = await navigator.clipboard.readText()
+      if (!rawText.trim()) {
+        alert("El portapapeles está vacío.")
+        return
+      }
+
+      let parsedData: any = null
+      const trimmed = rawText.trim()
+
+      try {
+        if (trimmed.startsWith("{{") && trimmed.endsWith("}}")) {
+          const normalized = trimmed
+            .replace(/^\{\{/, "[{")
+            .replace(/\}\}$/, "}]")
+            .replace(/\},\s*\{/g, "},{")
+          parsedData = JSON.parse(normalized)
+        } else if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+          parsedData = JSON.parse(trimmed)
+        } else {
+          parsedData = JSON.parse(`[${trimmed}]`)
+        }
+      } catch (error) {
+        console.error("[v0] Error parsing clipboard data:", error)
+        alert("No se pudo interpretar el contenido del portapapeles.")
+        return
+      }
+
+      if (!Array.isArray(parsedData) || parsedData.length === 0) {
+        alert("El formato del portapapeles no es válido.")
+        return
+      }
+
+      const [subtopicInfo, ...propositionInfo] = parsedData
+
+      if (!subtopicInfo?.texto) {
+        alert("El primer elemento debe contener el nombre del subtema.")
+        return
+      }
+
+      const newSubtopic: Subtopic = {
+        id: Date.now().toString(),
+        text: subtopicInfo.texto,
+        propositions:
+          propositionInfo.length > 0
+            ? propositionInfo
+                .filter((item: any) => Boolean(item?.texto))
+                .map((item: any, index: number) => ({
+                  type: "custom",
+                  text: item.texto,
+                  audios: [],
+                  label: `Proposición ${index + 1}`,
+                }))
+            : null,
+      }
+
+      setSubtopics((prev) => [...prev, newSubtopic])
+    } catch (error) {
+      console.error("[v0] Error importing from clipboard:", error)
+      alert("Ocurrió un error al leer el portapapeles.")
+    }
+  }
+
+  const openSubtopic = (subtopicId: string) => {
+    const subtopic = subtopics.find((s) => s.id === subtopicId)
+    if (!subtopic) return
+
+    setCurrentSubtopicId(subtopicId)
+    setCurrentIndex(0)
+
+    if (subtopic.propositions && subtopic.propositions.length > 0) {
+      setViewState("overview")
+    } else {
+      setViewState("subtopics")
+    }
+  }
+
   if (viewState === "subtopics") {
     return (
       <div className="min-h-screen bg-background p-8">
+        <div className="fixed top-4 left-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setViewState("home")}
+            className="hover:bg-primary/10"
+            title="Volver al tema"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+        </div>
+
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between mb-8">
             <h1 className="text-3xl font-bold text-balance">Subtemas</h1>
@@ -566,6 +737,81 @@ export default function PropositionsApp() {
     )
   }
 
+  if (viewState === "home") {
+    return (
+      <div className="min-h-screen bg-background p-8">
+        <div className="max-w-4xl mx-auto space-y-8">
+          <div className="flex items-center justify-between">
+            <input
+              type="text"
+              value={themeName}
+              onChange={(event) => setThemeName(event.target.value)}
+              placeholder="Ingresa nombre tema"
+              className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <div className="flex items-center gap-2 ml-4">
+              {useFileSystem && (
+                <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-primary/10">
+                  📁 Persistencia de archivos activa
+                </span>
+              )}
+              {!useFileSystem && (
+                <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-muted">
+                  💾 Guardado en navegador
+                </span>
+              )}
+              {isFileSystemSupported() && !useFileSystem && (
+                <Button variant="outline" onClick={activateFileSystemPersistence}>
+                  Activar persistencia
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
+                <Settings className="w-5 h-5" />
+              </Button>
+              <Button variant="default" size="icon" onClick={importFromClipboard} title="Importar desde portapapeles">
+                <Plus className="w-5 h-5" />
+              </Button>
+            </div>
+          </div>
+
+          <Card className="p-6 space-y-4">
+            {subtopics.length === 0 ? (
+              <p className="text-muted-foreground text-center">Agrega un subtema con el botón “+”.</p>
+            ) : (
+              subtopics.map((subtopic) => (
+                <button
+                  key={subtopic.id}
+                  className="w-full text-left px-4 py-3 rounded-lg border border-input hover:bg-muted transition-colors"
+                  onClick={() => openSubtopic(subtopic.id)}
+                >
+                  <p className="font-semibold text-foreground">{subtopic.text || "Subtema sin nombre"}</p>
+                  {subtopic.propositions && (
+                    <p className="text-sm text-muted-foreground">
+                      {subtopic.propositions.length} proposición{subtopic.propositions.length === 1 ? "" : "es"}
+                    </p>
+                  )}
+                </button>
+              ))
+            )}
+
+            <Button
+              variant="outline"
+              className="w-full bg-transparent"
+              onClick={() => {
+                setCurrentSubtopicId(null)
+                setViewState("subtopics")
+              }}
+            >
+              Administrar subtemas
+            </Button>
+          </Card>
+        </div>
+
+        <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+      </div>
+    )
+  }
+
   if (showRelaxAnimation) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
@@ -590,7 +836,7 @@ export default function PropositionsApp() {
             size="icon"
             onClick={goToHome}
             className="hover:bg-primary/10"
-            title="Volver a subtemas"
+            title="Volver al tema"
           >
             <Home className="w-6 h-6" />
           </Button>
@@ -602,18 +848,15 @@ export default function PropositionsApp() {
           <Card className="p-8 space-y-6">
             {propositions.map((prop, index) => (
               <div
-                key={prop.type}
+                key={`${prop.type}-${index}`}
                 className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
               >
                 <div className="flex-1 space-y-2">
                   <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                    {index === 0 && "Condición"}
-                    {index === 1 && "Recíproco"}
-                    {index === 2 && "Inverso"}
-                    {index === 3 && "Contra-Recíproco"}
+                    {getPropositionLabel(prop, index)}
                   </p>
                   <p className="text-lg leading-relaxed text-foreground font-mono tracking-wide break-words">
-                    {prop.text}
+                    {renderTextWithLatex(prop.text)}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -664,7 +907,7 @@ export default function PropositionsApp() {
           size="icon"
           onClick={goToHome}
           className="hover:bg-primary/10"
-          title="Volver a subtemas"
+          title="Volver al tema"
         >
           <Home className="w-6 h-6" />
         </Button>
@@ -675,13 +918,10 @@ export default function PropositionsApp() {
           <div className="flex items-start justify-between gap-8">
             <div className="flex-1 space-y-3">
               <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                {currentIndex === 0 && "Condición"}
-                {currentIndex === 1 && "Recíproco"}
-                {currentIndex === 2 && "Inverso"}
-                {currentIndex === 3 && "Contra-Recíproco"}
+                {getPropositionLabel(currentProposition, currentIndex)}
               </p>
               <p className="text-2xl leading-relaxed font-mono tracking-wide text-foreground break-words">
-                {currentProposition?.text}
+                {currentProposition ? renderTextWithLatex(currentProposition.text) : null}
               </p>
             </div>
             <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
@@ -753,7 +993,7 @@ export default function PropositionsApp() {
         <div className="flex gap-3 justify-start flex-wrap">
           {currentProposition?.audios.map((_, audioIdx) => (
             <div
-              key={`${currentProposition.type}-${audioIdx}`}
+              key={`${currentSubtopicId ?? "subtopic"}-${currentIndex}-audio-${audioIdx}`}
               className="w-10 h-10 flex items-center justify-center text-muted-foreground"
               title={`Audio ${audioIdx + 1}`}
             >
