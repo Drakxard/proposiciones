@@ -694,10 +694,44 @@ export default function PropositionsApp() {
         throw new Error("El acceso al portapapeles no está disponible")
       }
 
-      const clipboardText = await navigator.clipboard.readText()
-      const parsed = JSON.parse(clipboardText)
+      const clipboardTextRaw = await navigator.clipboard.readText()
+      const clipboardText = clipboardTextRaw.trim()
 
-      if (!Array.isArray(parsed) || parsed.length === 0) {
+      if (!clipboardText) {
+        throw new Error("El portapapeles está vacío")
+      }
+
+      const normalizeClipboardJson = (value: string) => {
+        if (value.startsWith("{{") && value.endsWith("}}")) {
+          return `[${value.slice(1, -1)}]`
+        }
+
+        if (value.startsWith("{") && value.endsWith("}")) {
+          return `[${value}]`
+        }
+
+        return null
+      }
+
+      let parsedClipboard: unknown
+
+      try {
+        parsedClipboard = JSON.parse(clipboardText)
+      } catch (initialError) {
+        const normalizedClipboard = normalizeClipboardJson(clipboardText)
+
+        if (!normalizedClipboard) {
+          throw initialError
+        }
+
+        parsedClipboard = JSON.parse(normalizedClipboard)
+      }
+
+      const parsed = Array.isArray(parsedClipboard)
+        ? parsedClipboard
+        : [parsedClipboard]
+
+      if (parsed.length === 0) {
         throw new Error("Formato inválido del portapapeles")
       }
 
