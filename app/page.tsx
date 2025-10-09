@@ -50,10 +50,46 @@ interface Theme {
   name: string
   subtopics: Subtopic[]
 }
+type ViewState = 
+  | "themes" 
+  | "subtopics" 
+  | "overview" 
+  | "recording" 
+  | "listening" 
+  | "countdown" 
+  | "prompt"
 
-type ViewState = "themes" | "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+const PRACTICE_VIEW_STATES: ViewState[] = [
+  "recording",
+  "prompt",
+  "listening",
+  "countdown",
+]
 
-const PRACTICE_VIEW_STATES: ViewState[] = ["recording", "prompt", "listening", "countdown"]
+const normalizeBackslashes = (input: string): string => {
+  let result = ""
+  let index = 0
+
+  while (index < input.length) {
+    const char = input[index]
+
+    if (char === "\\") {
+      if (input[index + 1] === "\\") {
+        result += "\\\\"
+        index += 2
+      } else {
+        result += "\\\\"
+        index += 1
+      }
+      continue
+    }
+
+    result += char
+    index += 1
+  }
+
+  return result
+}
 
 const tryParseAsArray = (text: string): any[] | null => {
   try {
@@ -61,12 +97,34 @@ const tryParseAsArray = (text: string): any[] | null => {
     if (Array.isArray(parsed)) {
       return parsed
     }
-    if (parsed && typeof parsed === "object") {
-      return [parsed]
-    }
   } catch {
-    // ignore parse errors in this helper
+    return null
   }
+  return null
+}
+
+const tryParseAsArray = (text: string): any[] | null => {
+  const candidates = [text]
+  const sanitized = normalizeBackslashes(text)
+
+  if (sanitized !== text) {
+    candidates.push(sanitized)
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate)
+      if (Array.isArray(parsed)) {
+        return parsed
+      }
+      if (parsed && typeof parsed === "object") {
+        return [parsed]
+      }
+    } catch {
+      // ignore parse errors in this helper
+    }
+  }
+
   return null
 }
 
