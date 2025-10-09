@@ -53,6 +53,125 @@ interface Theme {
 
 type ViewState = "themes" | "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
 
+const tryParseAsArray = (text: string): any[] | null => {
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) {
+      return parsed
+    }
+    if (parsed && typeof parsed === "object") {
+      return [parsed]
+    }
+  } catch {
+    // ignore parse errors in this helper
+  }
+  return null
+}
+
+const buildCandidateVariations = (input: string): string[] => {
+  const trimmed = input.trim()
+  if (!trimmed) return []
+
+  const variations = new Set<string>([trimmed])
+
+  if (trimmed.startsWith("{{") && trimmed.endsWith("}}") && trimmed.length > 4) {
+    variations.add(`[${trimmed.slice(1, -1)}]`)
+  }
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    variations.add(`[${trimmed}]`)
+  }
+
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    variations.add(trimmed)
+  }
+
+  return Array.from(variations)
+}
+
+const extractJsonSegments = (text: string): string[] => {
+  const segments: string[] = []
+  const stack: string[] = []
+  let startIndex = -1
+  let inString = false
+  let isEscaped = false
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false
+      } else if (char === "\\") {
+        isEscaped = true
+      } else if (char === "\"") {
+        inString = false
+      }
+      continue
+    }
+
+    if (char === "\"") {
+      inString = true
+      continue
+    }
+
+    if (char === "{" || char === "[") {
+      if (stack.length === 0) {
+        startIndex = i
+      }
+      stack.push(char)
+      continue
+    }
+
+    if (char === "}" || char === "]") {
+      if (stack.length === 0) {
+        continue
+      }
+
+      const last = stack[stack.length - 1]
+      const isMatching =
+        (last === "{" && char === "}") || (last === "[" && char === "]")
+
+      if (!isMatching) {
+        stack.length = 0
+        startIndex = -1
+        continue
+      }
+
+      stack.pop()
+      if (stack.length === 0 && startIndex !== -1) {
+        segments.push(text.slice(startIndex, i + 1))
+        startIndex = -1
+      }
+    }
+  }
+
+  return segments
+}
+
+const parseClipboardJson = (text: string): any[] | null => {
+  const initialCandidates = buildCandidateVariations(text)
+  for (const candidate of initialCandidates) {
+    const parsed = tryParseAsArray(candidate)
+    if (parsed) {
+      return parsed
+    }
+  }
+
+  const segments = extractJsonSegments(text)
+  for (const segment of segments) {
+    const segmentCandidates = buildCandidateVariations(segment)
+    for (const candidate of segmentCandidates) {
+      const parsed = tryParseAsArray(candidate)
+      if (parsed) {
+        return parsed
+      }
+    }
+  }
+
+  return null
+}
+
 export default function PropositionsApp() {
   const [themes, setThemes] = useState<Theme[]>([
     {
@@ -710,31 +829,9 @@ export default function PropositionsApp() {
       const clipboardText = await navigator.clipboard.readText()
       const normalizedText = clipboardText.trim()
 
-      let parsed: any
+      const parsed = parseClipboardJson(normalizedText)
 
-      try {
-        parsed = JSON.parse(normalizedText)
-      } catch (initialError: any) {
-        let fallbackText: string | null = null
-
-        if (normalizedText.startsWith("{{") && normalizedText.endsWith("}}")) {
-          fallbackText = `[${normalizedText.slice(1, -1)}]`
-        } else if (normalizedText.startsWith("{") && normalizedText.endsWith("}")) {
-          fallbackText = `[${normalizedText}]`
-        }
-
-        if (fallbackText) {
-          try {
-            parsed = JSON.parse(fallbackText)
-          } catch {
-            throw initialError
-          }
-        } else {
-          throw initialError
-        }
-      }
-
-      if (!Array.isArray(parsed) || parsed.length === 0) {
+      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
         throw new Error("Formato inválido del portapapeles")
       }
 
