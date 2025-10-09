@@ -3,9 +3,19 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft, Loader2 } from "lucide-react"
+import {
+  Play,
+  Mic,
+  Headphones,
+  Home,
+  Plus,
+  Settings,
+  ArrowLeft,
+  Loader2,
+  RotateCcw,
+} from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
-import { generatePropositions } from "./actions"
+import { generatePropositions, rewriteProposition } from "./actions"
 import { saveThemes, loadThemes, saveAudio, loadAudios } from "@/lib/storage"
 import {
   isFileSystemSupported,
@@ -60,6 +70,8 @@ export default function PropositionsApp() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
+  const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
+  const [rewritePreview, setRewritePreview] = useState<{ propositionId: string; text: string } | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -1120,6 +1132,102 @@ export default function PropositionsApp() {
     }
   }
 
+  const handleRewriteProposition = async (target: Proposition) => {
+    if (!currentSubtopic) {
+      return
+    }
+
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const conditionText = currentSubtopic.text || ""
+    const typeLabel =
+      target.type !== "custom" && propositionTypeLabels[target.type as PropositionType]
+        ? propositionTypeLabels[target.type as PropositionType]
+        : target.label
+
+    const defaultPrompt = `Condicion: ${conditionText}, quiero que hagas el ${typeLabel}`
+    const userPrompt = window.prompt(
+      "Escribe cómo quieres rehacer la proposición:",
+      defaultPrompt,
+    )
+
+    if (!userPrompt || !userPrompt.trim()) {
+      return
+    }
+
+    setRewritePreview(null)
+    setRewritingPropositionId(target.id)
+
+    try {
+      const result = await rewriteProposition(userPrompt)
+
+      if ("error" in result) {
+        throw new Error(result.error)
+      }
+
+      setRewritePreview({ propositionId: target.id, text: result.text })
+    } catch (error) {
+      console.error("[v0] Error rewriting proposition:", error)
+      alert("Error al rehacer la proposición. Intenta nuevamente.")
+    } finally {
+      setRewritingPropositionId(null)
+    }
+  }
+
+  const confirmRewritePreview = () => {
+    const preview = rewritePreview
+
+    if (!preview || !currentThemeId || !currentSubtopicId) {
+      setRewritePreview(null)
+      return
+    }
+
+    updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+      if (!subtopic.propositions) {
+        return subtopic
+      }
+
+      const index = subtopic.propositions.findIndex(
+        (prop) => prop.id === preview.propositionId,
+      )
+
+      if (index === -1) {
+        return subtopic
+      }
+
+      const updated = [...subtopic.propositions]
+      updated[index] = { ...updated[index], text: preview.text }
+
+      return {
+        ...subtopic,
+        propositions: updated,
+      }
+    })
+
+    setRewritePreview(null)
+  }
+
+  const retryRewritePreview = () => {
+    const preview = rewritePreview
+
+    if (!preview || rewritingPropositionId) {
+      return
+    }
+
+    const target = propositions.find((prop) => prop.id === preview.propositionId)
+    setRewritePreview(null)
+
+    if (target) {
+      handleRewriteProposition(target)
+    }
+  }
+
+  const cancelRewritePreview = () => {
+    setRewritePreview(null)
+  }
+
   const goToHome = () => {
     setViewState("themes")
     setCurrentSubtopicId(null)
@@ -1369,59 +1477,96 @@ export default function PropositionsApp() {
                 {propositions.map((prop, index) => (
                   <div
                     key={prop.id}
-                    className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
+                    className="p-6 rounded-lg hover:bg-muted/50 transition-colors space-y-4"
                   >
-                    <div className="flex-1 space-y-2">
-                      <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                        {prop.label}
-                      </p>
-                      <div className="text-lg leading-relaxed text-foreground break-words">
-                        <MathText text={prop.text} />
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="flex-1 space-y-2">
+                        <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                          {prop.label}
+                        </p>
+                        <div className="text-lg leading-relaxed text-foreground break-words">
+                          <MathText text={prop.text} />
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {prop.type === "custom" && currentSubtopic && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
-                          disabled={
-                            generatingPropositionId === prop.id ||
-                            isGenerating ||
-                            isRecording
-                          }
-                          className="whitespace-nowrap"
-                        >
-                          {generatingPropositionId === prop.id ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                            </>
-                          ) : (
-                            "Generar variantes"
-                          )}
-                        </Button>
-                      )}
-                      {prop.audios.length > 0 && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {prop.type === "custom" && currentSubtopic && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
+                            disabled={
+                              generatingPropositionId === prop.id ||
+                              isGenerating ||
+                              isRecording
+                            }
+                            className="whitespace-nowrap"
+                          >
+                            {generatingPropositionId === prop.id ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                              </>
+                            ) : (
+                              "Generar variantes"
+                            )}
+                          </Button>
+                        )}
+                        {prop.audios.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => playRecordedAudio(index)}
+                            className="hover:bg-primary/10"
+                            title="Reproducir último audio"
+                          >
+                            <Play className="w-5 h-5" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => playRecordedAudio(index)}
+                          onClick={() => handleRewriteProposition(prop)}
                           className="hover:bg-primary/10"
-                          title="Reproducir último audio"
+                          title="Rehacer esta proposición"
+                          disabled={rewritingPropositionId === prop.id}
                         >
-                          <Play className="w-5 h-5" />
+                          {rewritingPropositionId === prop.id ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="w-5 h-5" />
+                          )}
                         </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => goToProposition(index)}
-                        className="hover:bg-primary/10"
-                        title="Practicar esta proposición"
-                      >
-                        <Headphones className="w-5 h-5" />
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => goToProposition(index)}
+                          className="hover:bg-primary/10"
+                          title="Practicar esta proposición"
+                        >
+                          <Headphones className="w-5 h-5" />
+                        </Button>
+                      </div>
                     </div>
+                    {rewritePreview && rewritePreview.propositionId === prop.id && (
+                      <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                        <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                          Previsualización
+                        </p>
+                        <div className="text-base leading-relaxed text-foreground break-words">
+                          <MathText text={rewritePreview.text} />
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button size="sm" onClick={confirmRewritePreview}>
+                            Confirmar
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                            Reintentar
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                            Cancelar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </Card>
@@ -1477,7 +1622,26 @@ export default function PropositionsApp() {
               </div>
             </div>
             <div className="flex flex-col items-end gap-3">
-              <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
+              <div className="flex items-center gap-3">
+                <Headphones className="w-12 h-12 text-primary flex-shrink-0" />
+                {currentProposition && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRewriteProposition(currentProposition)}
+                    disabled={rewritingPropositionId === currentProposition.id}
+                    className="whitespace-nowrap"
+                  >
+                    {rewritingPropositionId === currentProposition.id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Rehaciendo...
+                      </>
+                    ) : (
+                      "Rehacer proposición"
+                    )}
+                  </Button>
+                )}
+              </div>
               {currentProposition?.type === "custom" && currentSubtopic && (
                 <Button
                   variant="outline"
@@ -1502,6 +1666,26 @@ export default function PropositionsApp() {
             </div>
           </div>
         </Card>
+
+        {rewritePreview && currentProposition && rewritePreview.propositionId === currentProposition.id && (
+          <Card className="p-6 space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-primary uppercase tracking-wide">Previsualización</p>
+              <div className="text-lg leading-relaxed text-foreground break-words">
+                <MathText text={rewritePreview.text} />
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button onClick={confirmRewritePreview}>Confirmar</Button>
+              <Button variant="outline" onClick={retryRewritePreview}>
+                Reintentar
+              </Button>
+              <Button variant="ghost" onClick={cancelRewritePreview}>
+                Cancelar
+              </Button>
+            </div>
+          </Card>
+        )}
 
         <div className="text-center space-y-6">
           {viewState === "recording" && !isRecording && (
