@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft, Loader2 } from "lucide-react"
+import { Play, Mic, Headphones, Home, Plus, Settings, ArrowLeft, Loader2, X } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { generatePropositions } from "./actions"
 import { saveThemes, loadThemes, saveAudio, loadAudios } from "@/lib/storage"
@@ -43,6 +43,11 @@ interface Theme {
 
 type ViewState = "themes" | "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
 
+type SelectedItem =
+  | { scope: "theme"; themeId: string }
+  | { scope: "subtopic"; themeId: string; subtopicId: string }
+  | { scope: "proposition"; themeId: string; subtopicId: string; propositionId: string }
+
 export default function PropositionsApp() {
   const [themes, setThemes] = useState<Theme[]>([
     {
@@ -60,6 +65,8 @@ export default function PropositionsApp() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
+  const [deleteMode, setDeleteMode] = useState(false)
+  const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -258,7 +265,21 @@ export default function PropositionsApp() {
         activeElement instanceof HTMLTextAreaElement ||
         (activeElement instanceof HTMLElement && activeElement.isContentEditable)
 
-      if (isTyping) {
+      const key = e.key.toLowerCase()
+
+      if (isTyping && key !== "q" && !(deleteMode && key === "x")) {
+        return
+      }
+
+      if (key === "q") {
+        e.preventDefault()
+        setDeleteMode((prev) => !prev)
+        return
+      }
+
+      if (deleteMode && key === "x") {
+        e.preventDefault()
+        deleteSelectedItem()
         return
       }
 
@@ -280,11 +301,21 @@ export default function PropositionsApp() {
 
     window.addEventListener("keydown", handleKeyPress)
     return () => window.removeEventListener("keydown", handleKeyPress)
-  }, [viewState, mediaRecorderRef.current])
+  }, [viewState, deleteMode, selectedItem])
 
   useEffect(() => {
     loadPersistedData()
   }, [])
+
+  useEffect(() => {
+    if (!deleteMode) {
+      setSelectedItem(null)
+    }
+  }, [deleteMode])
+
+  useEffect(() => {
+    setSelectedItem(null)
+  }, [viewState, currentThemeId, currentSubtopicId])
 
   const loadPersistedData = async () => {
     try {
@@ -1031,6 +1062,135 @@ export default function PropositionsApp() {
     setCountdown(5)
   }
 
+  const deleteTheme = (themeId: string) => {
+    setThemes((prev) => prev.filter((theme) => theme.id !== themeId))
+
+    if (currentThemeId === themeId) {
+      setCurrentThemeId(null)
+      setCurrentSubtopicId(null)
+      setViewState("themes")
+      setPendingPracticeIndex(null)
+      setCurrentIndex(0)
+      setIsRecording(false)
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop()
+        mediaRecorderRef.current = null
+      }
+    }
+
+    setSelectedItem(null)
+  }
+
+  const deleteSubtopic = (themeId: string, subtopicId: string) => {
+    setThemes((prev) =>
+      prev.map((theme) =>
+        theme.id === themeId
+          ? {
+              ...theme,
+              subtopics: theme.subtopics.filter((subtopic) => subtopic.id !== subtopicId),
+            }
+          : theme,
+      ),
+    )
+
+    if (currentSubtopicId === subtopicId) {
+      setCurrentSubtopicId(null)
+      setPendingPracticeIndex(null)
+      setCurrentIndex(0)
+      setIsRecording(false)
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop()
+        mediaRecorderRef.current = null
+      }
+      setViewState("subtopics")
+    }
+
+    setSelectedItem(null)
+  }
+
+  const deleteProposition = (themeId: string, subtopicId: string, propositionId: string) => {
+    const theme = themes.find((t) => t.id === themeId)
+    const subtopic = theme?.subtopics.find((s) => s.id === subtopicId)
+
+    if (!subtopic?.propositions) {
+      return
+    }
+
+    const removedIndex = subtopic.propositions.findIndex((prop) => prop.id === propositionId)
+    if (removedIndex === -1) {
+      return
+    }
+
+    const updatedPropositions = subtopic.propositions.filter((prop) => prop.id !== propositionId)
+
+    setThemes((prev) =>
+      prev.map((theme) =>
+        theme.id === themeId
+          ? {
+              ...theme,
+              subtopics: theme.subtopics.map((item) =>
+                item.id === subtopicId
+                  ? {
+                      ...item,
+                      propositions: updatedPropositions.length > 0 ? updatedPropositions : [],
+                    }
+                  : item,
+              ),
+            }
+          : theme,
+      ),
+    )
+
+    if (currentSubtopicId === subtopicId) {
+      setPendingPracticeIndex(null)
+      if (updatedPropositions.length === 0) {
+        setCurrentIndex(0)
+        setIsRecording(false)
+        if (audioRef.current) {
+          audioRef.current.pause()
+          audioRef.current = null
+        }
+        if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.stop()
+          mediaRecorderRef.current = null
+        }
+        if (viewState !== "overview") {
+          setViewState("overview")
+        }
+      } else if (removedIndex <= currentIndex) {
+        setCurrentIndex((prev) => Math.max(0, Math.min(updatedPropositions.length - 1, prev - 1)))
+      }
+    }
+
+    setSelectedItem(null)
+  }
+
+  const deleteSelectedItem = () => {
+    if (!deleteMode || !selectedItem) {
+      return
+    }
+
+    switch (selectedItem.scope) {
+      case "theme":
+        deleteTheme(selectedItem.themeId)
+        break
+      case "subtopic":
+        deleteSubtopic(selectedItem.themeId, selectedItem.subtopicId)
+        break
+      case "proposition":
+        deleteProposition(selectedItem.themeId, selectedItem.subtopicId, selectedItem.propositionId)
+        break
+    }
+  }
+
   useEffect(() => {
     if (viewState === "overview" && pendingPracticeIndex !== null) {
       const targetIndex = pendingPracticeIndex
@@ -1042,6 +1202,27 @@ export default function PropositionsApp() {
       }
     }
   }, [viewState, pendingPracticeIndex, propositions])
+
+  useEffect(() => {
+    if (
+      currentThemeId &&
+      currentSubtopicId &&
+      (viewState === "recording" ||
+        viewState === "countdown" ||
+        viewState === "listening" ||
+        viewState === "prompt")
+    ) {
+      const activeProposition = propositions[currentIndex]
+      if (activeProposition) {
+        setSelectedItem({
+          scope: "proposition",
+          themeId: currentThemeId,
+          subtopicId: currentSubtopicId,
+          propositionId: activeProposition.id,
+        })
+      }
+    }
+  }, [currentThemeId, currentSubtopicId, currentIndex, viewState, propositions])
 
   const expandCustomProposition = async (subtopicId: string, propositionId: string) => {
     if (!currentThemeId) return
@@ -1131,6 +1312,13 @@ export default function PropositionsApp() {
     }
   }
 
+  const deleteModeIndicator = deleteMode ? (
+    <div className="flex items-center gap-2 text-sm font-medium text-destructive bg-destructive/10 border border-destructive rounded-full px-3 py-1">
+      <X className="w-4 h-4" />
+      <span>Modo borrar activo: selecciona una fila y presiona X o toca la ✕.</span>
+    </div>
+  ) : null
+
   if (viewState === "themes") {
     return (
       <div className="min-h-screen bg-background p-8">
@@ -1162,6 +1350,8 @@ export default function PropositionsApp() {
             </div>
           </div>
 
+          {deleteModeIndicator && <div className="flex justify-end">{deleteModeIndicator}</div>}
+
           {isLoadingData ? (
             <Card className="p-12 text-center">
               <p className="text-muted-foreground">Cargando datos...</p>
@@ -1178,18 +1368,44 @@ export default function PropositionsApp() {
               {themes.map((theme) => (
                 <div
                   key={theme.id}
+                  tabIndex={0}
                   onClick={() => openTheme(theme.id)}
-                  className="flex items-center gap-4 p-4 rounded-lg border border-transparent hover:border-border hover:bg-muted/40 transition cursor-pointer"
+                  onMouseDown={() => deleteMode && setSelectedItem({ scope: "theme", themeId: theme.id })}
+                  onFocus={() => deleteMode && setSelectedItem({ scope: "theme", themeId: theme.id })}
+                  className={`flex items-center gap-4 p-4 rounded-lg border transition cursor-pointer ${
+                    deleteMode && selectedItem?.scope === "theme" && selectedItem.themeId === theme.id
+                      ? "border-destructive bg-destructive/10"
+                      : "border-transparent hover:border-border hover:bg-muted/40"
+                  }`}
+                  aria-selected={deleteMode && selectedItem?.scope === "theme" && selectedItem.themeId === theme.id}
                 >
                   <input
                     type="text"
                     value={theme.name}
                     onChange={(e) => updateThemeName(theme.id, e.target.value)}
                     onClick={(e) => e.stopPropagation()}
+                    onFocus={() => setSelectedItem({ scope: "theme", themeId: theme.id })}
                     placeholder="Tema sin nombre"
                     className="flex-1 bg-transparent text-lg font-medium focus:outline-none"
                   />
-                  <span className="text-sm text-muted-foreground">{theme.subtopics.length} subtemas</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">{theme.subtopics.length} subtemas</span>
+                    {deleteMode && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          deleteTheme(theme.id)
+                        }}
+                        className="hover:bg-destructive/10 text-destructive"
+                        title="Eliminar tema"
+                        aria-label="Eliminar tema"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </Card>
@@ -1236,6 +1452,8 @@ export default function PropositionsApp() {
             </div>
           </div>
 
+          {deleteModeIndicator && <div className="flex justify-end">{deleteModeIndicator}</div>}
+
           {isLoadingData ? (
             <Card className="p-12 text-center">
               <p className="text-muted-foreground">Cargando datos...</p>
@@ -1252,29 +1470,80 @@ export default function PropositionsApp() {
           ) : (
             <Card className="p-6 space-y-4">
               {subtopics.map((subtopic) => (
-                <div key={subtopic.id} className="flex items-center gap-4">
+                <div
+                  key={subtopic.id}
+                  tabIndex={0}
+                  onMouseDown={() => setSelectedItem({
+                    scope: "subtopic",
+                    themeId: currentTheme.id,
+                    subtopicId: subtopic.id,
+                  })}
+                  onFocus={() =>
+                    setSelectedItem({
+                      scope: "subtopic",
+                      themeId: currentTheme.id,
+                      subtopicId: subtopic.id,
+                    })
+                  }
+                  className={`flex items-center gap-4 p-4 rounded-lg border transition ${
+                    deleteMode &&
+                    selectedItem?.scope === "subtopic" &&
+                    selectedItem.subtopicId === subtopic.id
+                      ? "border-destructive bg-destructive/10"
+                      : "border-transparent hover:border-border hover:bg-muted/40"
+                  }`}
+                  aria-selected={
+                    deleteMode &&
+                    selectedItem?.scope === "subtopic" &&
+                    selectedItem.subtopicId === subtopic.id
+                  }
+                >
                   <input
                     type="text"
                     value={subtopic.text}
                     onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
+                    onFocus={() =>
+                      setSelectedItem({
+                        scope: "subtopic",
+                        themeId: currentTheme.id,
+                        subtopicId: subtopic.id,
+                      })
+                    }
                     placeholder="Ingresa una condición o teorema..."
                     className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
-                  <Button
-                    onClick={() =>
-                      subtopic.propositions
-                        ? openSubtopicDetail(subtopic.id)
-                        : evaluatePropositions(subtopic.id)
-                    }
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
-                    {isGenerating
-                      ? "Generando..."
-                      : subtopic.propositions
-                        ? "Ver subtema"
-                        : "Generar proposiciones"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={() =>
+                        subtopic.propositions
+                          ? openSubtopicDetail(subtopic.id)
+                          : evaluatePropositions(subtopic.id)
+                      }
+                      disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
+                      className="whitespace-nowrap"
+                    >
+                      {isGenerating
+                        ? "Generando..."
+                        : subtopic.propositions
+                          ? "Ver subtema"
+                          : "Generar proposiciones"}
+                    </Button>
+                    {deleteMode && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          deleteSubtopic(currentTheme.id, subtopic.id)
+                        }}
+                        className="hover:bg-destructive/10 text-destructive"
+                        title="Eliminar subtema"
+                        aria-label="Eliminar subtema"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
 
@@ -1351,6 +1620,8 @@ export default function PropositionsApp() {
             </div>
           </Card>
 
+          {deleteModeIndicator && <div className="flex justify-end">{deleteModeIndicator}</div>}
+
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
@@ -1369,7 +1640,35 @@ export default function PropositionsApp() {
                 {propositions.map((prop, index) => (
                   <div
                     key={prop.id}
-                    className="flex items-start justify-between gap-6 p-6 rounded-lg hover:bg-muted/50 transition-colors"
+                    tabIndex={0}
+                    onMouseDown={() =>
+                      setSelectedItem({
+                        scope: "proposition",
+                        themeId: currentTheme.id,
+                        subtopicId: currentSubtopic.id,
+                        propositionId: prop.id,
+                      })
+                    }
+                    onFocus={() =>
+                      setSelectedItem({
+                        scope: "proposition",
+                        themeId: currentTheme.id,
+                        subtopicId: currentSubtopic.id,
+                        propositionId: prop.id,
+                      })
+                    }
+                    className={`flex items-start justify-between gap-6 p-6 rounded-lg border transition-colors ${
+                      deleteMode &&
+                      selectedItem?.scope === "proposition" &&
+                      selectedItem.propositionId === prop.id
+                        ? "border-destructive bg-destructive/10"
+                        : "border-transparent hover:border-border hover:bg-muted/50"
+                    }`}
+                    aria-selected={
+                      deleteMode &&
+                      selectedItem?.scope === "proposition" &&
+                      selectedItem.propositionId === prop.id
+                    }
                   >
                     <div className="flex-1 space-y-2">
                       <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
@@ -1421,6 +1720,21 @@ export default function PropositionsApp() {
                       >
                         <Headphones className="w-5 h-5" />
                       </Button>
+                      {deleteMode && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            deleteProposition(currentTheme.id, currentSubtopic.id, prop.id)
+                          }}
+                          className="hover:bg-destructive/10 text-destructive"
+                          title="Eliminar proposición"
+                          aria-label="Eliminar proposición"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1499,9 +1813,25 @@ export default function PropositionsApp() {
                   )}
                 </Button>
               )}
+              {deleteMode && currentThemeId && currentSubtopicId && currentProposition && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() =>
+                    deleteProposition(currentThemeId, currentSubtopicId, currentProposition.id)
+                  }
+                  className="hover:bg-destructive/10 text-destructive"
+                  title="Eliminar proposición"
+                  aria-label="Eliminar proposición"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+              )}
             </div>
           </div>
         </Card>
+
+        {deleteModeIndicator && <div className="flex justify-end">{deleteModeIndicator}</div>}
 
         <div className="text-center space-y-6">
           {viewState === "recording" && !isRecording && (
