@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
+import { SubtopicImportModal, type SubtopicImportPayload } from "@/components/subtopic-import-modal"
 import { generatePropositions, rewriteProposition } from "./actions"
 import {
   loadThemes,
@@ -67,38 +68,6 @@ type ViewState =
   | "listening" 
   | "countdown" 
   | "prompt"
-
-const PRACTICE_VIEW_STATES: ViewState[] = [
-  "recording",
-  "prompt",
-  "listening",
-  "countdown",
-]
-
-const normalizeBackslashes = (input: string): string => {
-  let result = ""
-  let index = 0
-
-  while (index < input.length) {
-    const char = input[index]
-
-    if (char === "\\") {
-      if (input[index + 1] === "\\") {
-        result += "\\\\"
-        index += 2
-      } else {
-        result += "\\\\"
-        index += 1
-      }
-      continue
-    }
-
-    result += char
-    index += 1
-  }
-
-  return result
-}
 
 interface Era {
   id: string
@@ -181,6 +150,35 @@ const createBlankEra = (name?: string): Era => {
   }
 }
 
+const propositionTypeLabels: Record<PropositionType, string> = {
+  condicion: "Condición",
+  reciproco: "Recíproco",
+  inverso: "Inverso",
+  contrareciproco: "Contra-Recíproco",
+}
+
+const mapIndexToType = (index: number): PropositionKind => {
+  switch (index) {
+    case 0:
+      return "condicion"
+    case 1:
+      return "reciproco"
+    case 2:
+      return "inverso"
+    case 3:
+      return "contrareciproco"
+    default:
+      return "custom"
+  }
+}
+
+const getLabelForProposition = (type: PropositionKind, index: number) => {
+  if (type !== "custom" && propositionTypeLabels[type]) {
+    return propositionTypeLabels[type as PropositionType]
+  }
+  return `Proposición ${index + 1}`
+}
+
 const normalizeStoredEra = (storedEra: StoredEra): Era => {
   const createdAt = storedEra.createdAt ?? Date.now()
   const updatedAt = storedEra.updatedAt ?? createdAt
@@ -211,146 +209,12 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
   }
 }
 
-const tryParseAsArray = (text: string): any[] | null => {
-  try {
-    const parsed = JSON.parse(text)
-    if (Array.isArray(parsed)) {
-      return parsed
-    }
-  } catch {
-    return null
-  }
-  return null
-}
-
-const tryParseAsArray = (text: string): any[] | null => {
-  const candidates = [text]
-  const sanitized = normalizeBackslashes(text)
-
-  if (sanitized !== text) {
-    candidates.push(sanitized)
-  }
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate)
-      if (Array.isArray(parsed)) {
-        return parsed
-      }
-      if (parsed && typeof parsed === "object") {
-        return [parsed]
-      }
-    } catch {
-      // ignore parse errors in this helper
-    }
-  }
-
-  return null
-}
-
-const buildCandidateVariations = (input: string): string[] => {
-  const trimmed = input.trim()
-  if (!trimmed) return []
-
-  const variations = new Set<string>([trimmed])
-
-  if (trimmed.startsWith("{{") && trimmed.endsWith("}}") && trimmed.length > 4) {
-    variations.add(`[${trimmed.slice(1, -1)}]`)
-  }
-
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    variations.add(`[${trimmed}]`)
-  }
-
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    variations.add(trimmed)
-  }
-
-  return Array.from(variations)
-}
-
-const extractJsonSegments = (text: string): string[] => {
-  const segments: string[] = []
-  const stack: string[] = []
-  let startIndex = -1
-  let inString = false
-  let isEscaped = false
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i]
-
-    if (inString) {
-      if (isEscaped) {
-        isEscaped = false
-      } else if (char === "\\") {
-        isEscaped = true
-      } else if (char === "\"") {
-        inString = false
-      }
-      continue
-    }
-
-    if (char === "\"") {
-      inString = true
-      continue
-    }
-
-    if (char === "{" || char === "[") {
-      if (stack.length === 0) {
-        startIndex = i
-      }
-      stack.push(char)
-      continue
-    }
-
-    if (char === "}" || char === "]") {
-      if (stack.length === 0) {
-        continue
-      }
-
-      const last = stack[stack.length - 1]
-      const isMatching =
-        (last === "{" && char === "}") || (last === "[" && char === "]")
-
-      if (!isMatching) {
-        stack.length = 0
-        startIndex = -1
-        continue
-      }
-
-      stack.pop()
-      if (stack.length === 0 && startIndex !== -1) {
-        segments.push(text.slice(startIndex, i + 1))
-        startIndex = -1
-      }
-    }
-  }
-
-  return segments
-}
-
-const parseClipboardJson = (text: string): any[] | null => {
-  const initialCandidates = buildCandidateVariations(text)
-  for (const candidate of initialCandidates) {
-    const parsed = tryParseAsArray(candidate)
-    if (parsed) {
-      return parsed
-    }
-  }
-
-  const segments = extractJsonSegments(text)
-  for (const segment of segments) {
-    const segmentCandidates = buildCandidateVariations(segment)
-    for (const candidate of segmentCandidates) {
-      const parsed = tryParseAsArray(candidate)
-      if (parsed) {
-        return parsed
-      }
-    }
-  }
-
-  return null
-}
+const PRACTICE_VIEW_STATES: ViewState[] = [
+  "recording",
+  "prompt",
+  "listening",
+  "countdown",
+]
 export default function PropositionsApp() {
   const initialTimestamp = useMemo(() => Date.now(), [])
   const [themes, setThemes] = useState<Theme[]>(() => cloneThemes(DEFAULT_INITIAL_THEMES))
@@ -368,6 +232,9 @@ export default function PropositionsApp() {
   const [viewState, setViewState] = useState<ViewState>("themes")
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [showErasModal, setShowErasModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importInitialText, setImportInitialText] = useState("")
+  const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
@@ -508,20 +375,6 @@ export default function PropositionsApp() {
   const currentEraSummary = useMemo(() => summarizeEra(currentEra), [currentEra])
   const historySummaries = useMemo(() => eraHistory.map(summarizeEra), [eraHistory])
 
-  const sharedModals = (
-    <>
-      <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
-      <ErasModal
-        open={showErasModal}
-        onOpenChange={setShowErasModal}
-        currentEra={currentEraSummary}
-        history={historySummaries}
-        onSelectEra={handleSelectEra}
-        onRenameEra={handleRenameEra}
-      />
-    </>
-  )
-
   const currentTheme = currentThemeId ? themes.find((t) => t.id === currentThemeId) ?? null : null
   const subtopics = currentTheme?.subtopics ?? []
   const currentSubtopic =
@@ -533,35 +386,6 @@ export default function PropositionsApp() {
   const canGoToPrevious = currentIndex > 0
   const canGoToNext = currentIndex < propositions.length - 1
   const isNavigationLocked = isRecording || viewState === "countdown"
-
-  const propositionTypeLabels: Record<PropositionType, string> = {
-    condicion: "Condición",
-    reciproco: "Recíproco",
-    inverso: "Inverso",
-    contrareciproco: "Contra-Recíproco",
-  }
-
-  const mapIndexToType = (index: number): PropositionKind => {
-    switch (index) {
-      case 0:
-        return "condicion"
-      case 1:
-        return "reciproco"
-      case 2:
-        return "inverso"
-      case 3:
-        return "contrareciproco"
-      default:
-        return "custom"
-    }
-  }
-
-  const getLabelForProposition = (type: PropositionKind, index: number) => {
-    if (type !== "custom" && propositionTypeLabels[type]) {
-      return propositionTypeLabels[type as PropositionType]
-    }
-    return `Proposición ${index + 1}`
-  }
 
   const updateThemeById = (themeId: string, updater: (theme: Theme) => Theme) => {
     setThemes((prev) => prev.map((theme) => (theme.id === themeId ? updater(theme) : theme)))
@@ -579,6 +403,127 @@ export default function PropositionsApp() {
       ),
     }))
   }
+
+  const handleImportModalOpenChange = (open: boolean) => {
+    setShowImportModal(open)
+    if (!open) {
+      setImportClipboardError(null)
+    }
+  }
+
+  const handleImportModalSubmit = ({ rawText, diagnostics }: SubtopicImportPayload) => {
+    if (!currentThemeId) {
+      return
+    }
+
+    try {
+      const parsed = diagnostics.parsed ?? []
+
+      if (!parsed.length) {
+        throw new Error("El contenido importado está vacío.")
+      }
+
+      const [subtopicInfo, ...propositionEntries] = parsed
+
+      if (!subtopicInfo || typeof subtopicInfo.texto !== "string") {
+        throw new Error("El primer elemento debe incluir la propiedad 'texto'.")
+      }
+
+      const newSubtopicId = `subtopic-${Date.now()}`
+
+      const propositions: Proposition[] | null = propositionEntries.length
+        ? propositionEntries.map((entry: any, index: number) => {
+            const rawTextValue =
+              typeof entry === "string"
+                ? entry
+                : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
+            const textValue =
+              typeof rawTextValue === "string" ? rawTextValue : String(rawTextValue ?? "")
+
+            const incomingType = entry?.tipo as PropositionKind | undefined
+            const baseType = incomingType ?? "custom"
+            const label =
+              typeof entry?.etiqueta === "string"
+                ? entry.etiqueta
+                : baseType !== "custom" && propositionTypeLabels[baseType as PropositionType]
+                  ? propositionTypeLabels[baseType as PropositionType]
+                  : getLabelForProposition(baseType, index)
+
+            return {
+              id: `${newSubtopicId}-${index}`,
+              type: baseType,
+              label,
+              text: textValue,
+              audios: [],
+            }
+          })
+        : null
+
+      updateThemeById(currentThemeId, (theme) => ({
+        ...theme,
+        subtopics: [
+          ...theme.subtopics,
+          {
+            id: newSubtopicId,
+            text: subtopicInfo.texto,
+            propositions,
+          },
+        ],
+      }))
+
+      const normalizedText = diagnostics.normalizedText || rawText.trim()
+      setImportInitialText(normalizedText)
+      setShowImportModal(false)
+      setImportClipboardError(null)
+
+      if (typeof window !== "undefined") {
+        try {
+          if (normalizedText) {
+            window.localStorage.setItem("subtopic-import:last-text", normalizedText)
+          }
+
+          if (diagnostics.appliedFixes.length) {
+            window.localStorage.setItem(
+              "subtopic-import:last-fixes",
+              JSON.stringify(diagnostics.appliedFixes),
+            )
+          } else {
+            window.localStorage.removeItem("subtopic-import:last-fixes")
+          }
+        } catch (storageError) {
+          console.warn("[v0] No se pudo guardar el historial de importación:", storageError)
+        }
+      }
+    } catch (error: any) {
+      console.error("[v0] Error importing subtopic:", error)
+      alert(
+        error?.message
+          ? `No se pudo importar el subtema: ${error.message}`
+          : "No se pudo importar el subtema con el contenido proporcionado.",
+      )
+    }
+  }
+
+  const sharedModals = (
+    <>
+      <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+      <ErasModal
+        open={showErasModal}
+        onOpenChange={setShowErasModal}
+        currentEra={currentEraSummary}
+        history={historySummaries}
+        onSelectEra={handleSelectEra}
+        onRenameEra={handleRenameEra}
+      />
+      <SubtopicImportModal
+        open={showImportModal}
+        initialText={importInitialText}
+        clipboardError={importClipboardError}
+        onOpenChange={handleImportModalOpenChange}
+        onSubmit={handleImportModalSubmit}
+      />
+    </>
+  )
 
   const deleteTheme = (themeId: string) => {
     setThemes((prev) => prev.filter((theme) => theme.id !== themeId))
@@ -1499,74 +1444,47 @@ export default function PropositionsApp() {
   const importSubtopicFromClipboard = async () => {
     if (!currentThemeId) return
 
-    try {
-      if (!navigator.clipboard?.readText) {
-        throw new Error("El acceso al portapapeles no está disponible")
+    let clipboardText = ""
+    let clipboardError: string | null = null
+
+    if (navigator.clipboard?.readText) {
+      try {
+        clipboardText = await navigator.clipboard.readText()
+      } catch (error) {
+        console.error("[v0] Error reading clipboard:", error)
+        clipboardError =
+          "No se pudo leer el portapapeles automáticamente. Pega o ajusta el contenido manualmente."
       }
-
-      const clipboardText = await navigator.clipboard.readText()
-      const normalizedText = clipboardText.trim()
-
-      const parsed = parseClipboardJson(normalizedText)
-
-      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
-        throw new Error("Formato inválido del portapapeles")
-      }
-
-      const [subtopicInfo, ...propositionEntries] = parsed
-
-      if (!subtopicInfo || typeof subtopicInfo.texto !== "string") {
-        throw new Error("El primer elemento debe incluir la propiedad 'texto'")
-      }
-
-      const newSubtopicId = `subtopic-${Date.now()}`
-
-      const propositions: Proposition[] | null = propositionEntries.length
-        ? propositionEntries.map((entry: any, index: number) => {
-            const rawText =
-              typeof entry === "string"
-                ? entry
-                : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
-            const textValue = typeof rawText === "string" ? rawText : String(rawText ?? "")
-
-            const incomingType = entry?.tipo as PropositionKind | undefined
-            const baseType = incomingType ?? "custom"
-            const label =
-              typeof entry?.etiqueta === "string"
-                ? entry.etiqueta
-                : baseType !== "custom" && propositionTypeLabels[baseType as PropositionType]
-                  ? propositionTypeLabels[baseType as PropositionType]
-                  : getLabelForProposition(baseType, index)
-
-            return {
-              id: `${newSubtopicId}-${index}`,
-              type: baseType,
-              label,
-              text: textValue,
-              audios: [],
-            }
-          })
-        : null
-
-      updateThemeById(currentThemeId, (theme) => ({
-        ...theme,
-        subtopics: [
-          ...theme.subtopics,
-          {
-            id: newSubtopicId,
-            text: subtopicInfo.texto,
-            propositions,
-          },
-        ],
-      }))
-    } catch (error: any) {
-      console.error("[v0] Error importing from clipboard:", error)
-      alert(
-        error?.message
-          ? `No se pudo importar el subtema: ${error.message}`
-          : "No se pudo importar el subtema desde el portapapeles.",
-      )
+    } else {
+      clipboardError =
+        "El navegador no permite leer el portapapeles automáticamente. Pega el contenido manualmente."
     }
+
+    let initialText = clipboardText
+    let reuseMessage = ""
+
+    if (!initialText && typeof window !== "undefined") {
+      try {
+        const lastText = window.localStorage.getItem("subtopic-import:last-text")
+        if (lastText) {
+          initialText = lastText
+          reuseMessage =
+            "Se cargó el último formato importado para ayudarte a reutilizarlo o corregirlo rápidamente."
+        }
+      } catch (storageError) {
+        console.warn("[v0] No se pudo recuperar el historial de importación:", storageError)
+      }
+    }
+
+    const combinedMessage = clipboardError
+      ? reuseMessage
+        ? `${clipboardError} ${reuseMessage}`
+        : clipboardError
+      : reuseMessage
+
+    setImportInitialText(initialText ?? "")
+    setImportClipboardError(combinedMessage || null)
+    setShowImportModal(true)
   }
 
   const addSubtopic = () => {
