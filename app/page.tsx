@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useMemo } from "react"
+import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -50,8 +50,21 @@ interface Theme {
   name: string
   subtopics: Subtopic[]
 }
+type ViewState = 
+  | "themes" 
+  | "subtopics" 
+  | "overview" 
+  | "recording" 
+  | "listening" 
+  | "countdown" 
+  | "prompt"
 
-type ViewState = "themes" | "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+const PRACTICE_VIEW_STATES: ViewState[] = [
+  "recording",
+  "prompt",
+  "listening",
+  "countdown",
+]
 
 const normalizeBackslashes = (input: string): string => {
   let result = ""
@@ -76,6 +89,18 @@ const normalizeBackslashes = (input: string): string => {
   }
 
   return result
+}
+
+const tryParseAsArray = (text: string): any[] | null => {
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) {
+      return parsed
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 const tryParseAsArray = (text: string): any[] | null => {
@@ -255,6 +280,10 @@ export default function PropositionsApp() {
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
   const propositions = currentSubtopic?.propositions || []
+  const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
+  const canGoToPrevious = currentIndex > 0
+  const canGoToNext = currentIndex < propositions.length - 1
+  const isNavigationLocked = isRecording || viewState === "countdown"
 
   const propositionTypeLabels: Record<PropositionType, string> = {
     condicion: "Condición",
@@ -524,6 +553,39 @@ export default function PropositionsApp() {
 
   const mediaRecorder = mediaRecorderRef.current
 
+  const handleNavigateProposition = useCallback(
+    (direction: "previous" | "next") => {
+      if (!isPracticeView) {
+        return
+      }
+
+      if (isRecording || viewState === "countdown") {
+        return
+      }
+
+      const offset = direction === "previous" ? -1 : 1
+      const targetIndex = currentIndex + offset
+
+      if (!propositions[targetIndex]) {
+        return
+      }
+
+      if (audioRef.current) {
+        const currentAudio = audioRef.current
+        currentAudio.pause()
+        if (currentAudio.src && currentAudio.src.startsWith("blob:")) {
+          URL.revokeObjectURL(currentAudio.src)
+        }
+        audioRef.current = null
+      }
+
+      setCurrentIndex(targetIndex)
+      setCountdown(5)
+      setViewState("recording")
+    },
+    [currentIndex, isPracticeView, isRecording, propositions, viewState],
+  )
+
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       const activeElement = document.activeElement
@@ -548,6 +610,14 @@ export default function PropositionsApp() {
           setCurrentIndex(0)
           setViewState("recording")
           setCountdown(5)
+        }
+        return
+      }
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (isPracticeView) {
+          e.preventDefault()
+          handleNavigateProposition(e.key === "ArrowLeft" ? "previous" : "next")
         }
         return
       }
@@ -582,6 +652,8 @@ export default function PropositionsApp() {
     focusedItem,
     currentThemeId,
     currentSubtopicId,
+    isPracticeView,
+    handleNavigateProposition,
   ])
 
   useEffect(() => {
@@ -1300,8 +1372,17 @@ export default function PropositionsApp() {
   }
 
   const goToProposition = (index: number) => {
-    if (!propositions[index]) {
+    if (!propositions[index] || isRecording) {
       return
+    }
+
+    if (audioRef.current) {
+      const currentAudio = audioRef.current
+      currentAudio.pause()
+      if (currentAudio.src && currentAudio.src.startsWith("blob:")) {
+        URL.revokeObjectURL(currentAudio.src)
+      }
+      audioRef.current = null
     }
 
     setCurrentIndex(index)
@@ -1890,7 +1971,36 @@ export default function PropositionsApp() {
       </div>
 
       <div className="max-w-4xl w-full space-y-8">
-        <Card className="p-12">
+        <Card className="p-12 space-y-6">
+          {isPracticeView && propositions.length > 0 && (
+            <div className="flex items-center justify-center gap-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleNavigateProposition("previous")}
+                disabled={!canGoToPrevious || isNavigationLocked}
+                className="w-16 justify-center font-semibold"
+                aria-label="Proposición anterior"
+                title="Proposición anterior"
+              >
+                {"<-"}
+              </Button>
+              <span className="text-sm font-medium text-muted-foreground">
+                Proposición {currentIndex + 1} de {propositions.length}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleNavigateProposition("next")}
+                disabled={!canGoToNext || isNavigationLocked}
+                className="w-16 justify-center font-semibold"
+                aria-label="Proposición siguiente"
+                title="Proposición siguiente"
+              >
+                {"->"}
+              </Button>
+            </div>
+          )}
           <div className="flex items-start justify-between gap-8">
             <div className="flex-1 space-y-3">
               <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
