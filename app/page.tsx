@@ -1145,7 +1145,7 @@ export default function PropositionsApp() {
               )}
               {useFileSystem && (
                 <span className="text-sm text-muted-foreground px-3 py-1 rounded-full bg-primary/10">
-                  📁 Persistencia de archivos activa
+                  Persistencia activa
                 </span>
               )}
               {!useFileSystem && (
@@ -1243,11 +1243,8 @@ export default function PropositionsApp() {
           ) : subtopics.length === 0 ? (
             <Card className="p-12 text-center space-y-4">
               <p className="text-muted-foreground">
-                Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles o agrega uno manualmente.
+                Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles.
               </p>
-              <Button variant="outline" onClick={addSubtopic}>
-                <Plus className="w-4 h-4 mr-2" /> Agregar subtema manual
-              </Button>
             </Card>
           ) : (
             <Card className="p-6 space-y-4">
@@ -1277,11 +1274,6 @@ export default function PropositionsApp() {
                   </Button>
                 </div>
               ))}
-
-              <Button variant="outline" onClick={addSubtopic} className="w-full bg-transparent">
-                <Plus className="w-4 h-4 mr-2" />
-                Agregar subtema manual
-              </Button>
             </Card>
           )}
         </div>
