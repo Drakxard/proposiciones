@@ -18,7 +18,11 @@ import {
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
 import { SubtopicImportModal, type SubtopicImportPayload } from "@/components/subtopic-import-modal"
-import { generatePropositions, rewriteProposition } from "./actions"
+import {
+  generatePropositionVariant,
+  rewriteProposition,
+  type PropositionVariant,
+} from "./actions"
 import {
   loadThemes,
   loadAudios,
@@ -157,6 +161,13 @@ const propositionTypeLabels: Record<PropositionType, string> = {
   contrareciproco: "Contra-Recíproco",
 }
 
+const STANDARD_PROPOSITION_TYPES: PropositionType[] = [
+  "condicion",
+  "reciproco",
+  "inverso",
+  "contrareciproco",
+]
+
 const mapIndexToType = (index: number): PropositionKind => {
   switch (index) {
     case 0:
@@ -235,9 +246,9 @@ export default function PropositionsApp() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [importInitialText, setImportInitialText] = useState("")
   const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
-  const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
+  const [generatingVariantId, setGeneratingVariantId] = useState<string | null>(null)
 
   // 👇 de codex/modify-subtopic-display-behavior
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -383,9 +394,40 @@ export default function PropositionsApp() {
       : null
   const propositions = currentSubtopic?.propositions || []
   const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
-  const canGoToPrevious = currentIndex > 0
-  const canGoToNext = currentIndex < propositions.length - 1
+  const hasContentAtIndex = useCallback(
+    (index: number) => {
+      const target = propositions[index]
+      return Boolean(target && target.text && target.text.trim().length > 0)
+    },
+    [propositions],
+  )
+  const findNextFilledIndex = useCallback(
+    (fromIndex: number) => {
+      for (let i = fromIndex + 1; i < propositions.length; i += 1) {
+        if (hasContentAtIndex(i)) {
+          return i
+        }
+      }
+      return -1
+    },
+    [hasContentAtIndex, propositions.length],
+  )
+  const findPreviousFilledIndex = useCallback(
+    (fromIndex: number) => {
+      for (let i = fromIndex - 1; i >= 0; i -= 1) {
+        if (hasContentAtIndex(i)) {
+          return i
+        }
+      }
+      return -1
+    },
+    [hasContentAtIndex],
+  )
+  const canGoToPrevious = findPreviousFilledIndex(currentIndex) !== -1
+  const canGoToNext = findNextFilledIndex(currentIndex) !== -1
   const isNavigationLocked = isRecording || viewState === "countdown"
+  const isVariantGenerationActive = generatingVariantId !== null
+  const isGenerationBusy = generatingVariantId !== null || generatingPropositionId !== null
 
   const updateThemeById = (themeId: string, updater: (theme: Theme) => Theme) => {
     setThemes((prev) => prev.map((theme) => (theme.id === themeId ? updater(theme) : theme)))
@@ -402,6 +444,119 @@ export default function PropositionsApp() {
         subtopic.id === subtopicId ? updater(subtopic) : subtopic,
       ),
     }))
+  }
+
+  const ensureStandardPropositions = (themeId: string, subtopicId: string) => {
+    updateSubtopicById(themeId, subtopicId, (subtopic) => {
+      const existing = subtopic.propositions ?? []
+
+      const standardEntries = STANDARD_PROPOSITION_TYPES.map((type) => {
+        const existingEntry = existing.find((prop) => prop.type === type)
+        const label = propositionTypeLabels[type]
+
+        if (existingEntry) {
+          return {
+            ...existingEntry,
+            id: existingEntry.id ?? `${subtopic.id}-${type}`,
+            type,
+            label,
+            text: type === "condicion" ? subtopic.text : existingEntry.text,
+            audios: [...existingEntry.audios],
+          }
+        }
+
+        return {
+          id: `${subtopic.id}-${type}`,
+          type,
+          label,
+          text: type === "condicion" ? subtopic.text : "",
+          audios: [],
+        }
+      })
+
+      const additionalEntries = existing
+        .filter((prop) => !STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType))
+        .map((prop) => ({ ...prop, audios: [...prop.audios] }))
+
+      return {
+        ...subtopic,
+        propositions: [...standardEntries, ...additionalEntries],
+      }
+    })
+  }
+
+  const getGroqSettings = (): { model?: string; systemPrompt?: string } => {
+    if (typeof window === "undefined") {
+      return { model: undefined, systemPrompt: undefined }
+    }
+
+    try {
+      const storedModel = window.localStorage.getItem("groq_model")
+      const storedPrompt = window.localStorage.getItem("groq_prompt")
+
+      return {
+        model: storedModel ?? undefined,
+        systemPrompt: storedPrompt ?? undefined,
+      }
+    } catch (error) {
+      console.warn("[v0] No se pudieron leer los ajustes de Groq:", error)
+      return { model: undefined, systemPrompt: undefined }
+    }
+  }
+
+  const generateVariantForSubtopic = async (proposition: Proposition) => {
+    if (!currentThemeId || !currentSubtopicId || !currentSubtopic) {
+      return
+    }
+
+    if (proposition.type === "condicion" || proposition.type === "custom") {
+      return
+    }
+
+    if (!currentSubtopic.text.trim()) {
+      alert("Agrega una condición antes de generar nuevas proposiciones.")
+      return
+    }
+
+    const { model, systemPrompt } = getGroqSettings()
+    setGeneratingVariantId(proposition.id)
+
+    try {
+      const result = await generatePropositionVariant(
+        currentSubtopic.text,
+        proposition.type as PropositionVariant,
+        model,
+        systemPrompt,
+      )
+
+      if ("error" in result) {
+        throw new Error(result.error)
+      }
+
+      updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+        if (!subtopic.propositions) {
+          return subtopic
+        }
+
+        const index = subtopic.propositions.findIndex((prop) => prop.id === proposition.id)
+        if (index === -1) {
+          return subtopic
+        }
+
+        const updated = [...subtopic.propositions]
+        updated[index] = { ...updated[index], text: result.text }
+
+        return {
+          ...subtopic,
+          propositions: updated,
+        }
+      })
+    } catch (error) {
+      console.error("[v0] Error generating proposition variant:", error)
+      alert("Error al generar la proposición. Intenta nuevamente.")
+    } finally {
+      setGeneratingVariantId(null)
+    }
   }
 
   const handleImportModalOpenChange = (open: boolean) => {
@@ -590,6 +745,8 @@ export default function PropositionsApp() {
       }),
     )
 
+    ensureStandardPropositions(currentThemeId, currentSubtopicId)
+
     if (remainingPropositions.length === 0) {
       setCurrentIndex(0)
     } else {
@@ -757,10 +914,12 @@ export default function PropositionsApp() {
         return
       }
 
-      const offset = direction === "previous" ? -1 : 1
-      const targetIndex = currentIndex + offset
+      const targetIndex =
+        direction === "previous"
+          ? findPreviousFilledIndex(currentIndex)
+          : findNextFilledIndex(currentIndex)
 
-      if (!propositions[targetIndex]) {
+      if (targetIndex === -1) {
         return
       }
 
@@ -777,7 +936,14 @@ export default function PropositionsApp() {
       setCountdown(5)
       setViewState("recording")
     },
-    [currentIndex, isPracticeView, isRecording, propositions, viewState],
+    [
+      currentIndex,
+      findNextFilledIndex,
+      findPreviousFilledIndex,
+      isPracticeView,
+      isRecording,
+      viewState,
+    ],
   )
 
   useEffect(() => {
@@ -806,8 +972,9 @@ export default function PropositionsApp() {
 
       if (e.key === " " && viewState === "overview") {
         e.preventDefault()
-        if (propositions.length > 0) {
-          setCurrentIndex(0)
+        const firstAvailable = findNextFilledIndex(-1)
+        if (firstAvailable !== -1) {
+          setCurrentIndex(firstAvailable)
           setViewState("recording")
           setCountdown(5)
         }
@@ -854,6 +1021,7 @@ export default function PropositionsApp() {
     currentSubtopicId,
     isPracticeView,
     handleNavigateProposition,
+    findNextFilledIndex,
   ])
 
   useEffect(() => {
@@ -1505,10 +1673,25 @@ export default function PropositionsApp() {
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
-    updateSubtopicById(currentThemeId, id, (subtopic) => ({
-      ...subtopic,
-      text,
-    }))
+    updateSubtopicById(currentThemeId, id, (subtopic) => {
+      const updated: Subtopic = {
+        ...subtopic,
+        text,
+      }
+
+      if (subtopic.propositions) {
+        updated.propositions = subtopic.propositions.map((prop) =>
+          prop.type === "condicion"
+            ? {
+                ...prop,
+                text,
+              }
+            : prop,
+        )
+      }
+
+      return updated
+    })
   }
 
   const openSubtopicDetail = (subtopicId: string) => {
@@ -1521,88 +1704,18 @@ export default function PropositionsApp() {
       return
     }
 
+    ensureStandardPropositions(currentThemeId, subtopicId)
+
+    const initialIndex = subtopic.propositions
+      ? subtopic.propositions.findIndex((prop) => prop.text.trim())
+      : subtopic.text.trim()
+        ? 0
+        : -1
+
     setCurrentSubtopicId(subtopicId)
-    setCurrentIndex(0)
-    setPendingPracticeIndex(subtopic.propositions && subtopic.propositions.length > 0 ? 0 : null)
+    setCurrentIndex(initialIndex >= 0 ? initialIndex : 0)
+    setPendingPracticeIndex(null)
     setViewState("overview")
-  }
-
-  const evaluatePropositions = async (subtopicId: string) => {
-    if (!currentThemeId) return
-
-    const theme = themes.find((t) => t.id === currentThemeId)
-    const subtopic = theme?.subtopics.find((s) => s.id === subtopicId)
-    if (!subtopic || !subtopic.text.trim()) return
-
-    console.log("[v0] Evaluating propositions for subtopic:", subtopic)
-    console.log("[v0] Subtopic has propositions?", !!subtopic.propositions)
-
-    if (subtopic.propositions && subtopic.propositions.length > 0) {
-      console.log("[v0] Propositions already exist, going to interface")
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setPendingPracticeIndex(0)
-      setViewState("overview")
-      return
-    }
-
-    console.log("[v0] No propositions found, generating with Groq...")
-    setIsGenerating(true)
-    try {
-      const result = await generatePropositions(subtopic.text)
-
-      if ("error" in result) {
-        throw new Error(result.error)
-      }
-
-      console.log("[v0] Generated propositions:", result)
-
-      const newPropositions: Proposition[] = [
-        {
-          id: `${subtopic.id}-condicion`,
-          type: "condicion",
-          label: propositionTypeLabels.condicion,
-          text: subtopic.text,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-reciproco`,
-          type: "reciproco",
-          label: propositionTypeLabels.reciproco,
-          text: result.reciproco,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-inverso`,
-          type: "inverso",
-          label: propositionTypeLabels.inverso,
-          text: result.inverso,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-contrareciproco`,
-          type: "contrareciproco",
-          label: propositionTypeLabels.contrareciproco,
-          text: result.contrareciproco,
-          audios: [],
-        },
-      ]
-
-      updateSubtopicById(currentThemeId, subtopicId, (current) => ({
-        ...current,
-        propositions: newPropositions,
-      }))
-
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setPendingPracticeIndex(0)
-      setViewState("overview")
-    } catch (error) {
-      console.error("[v0] Error generating propositions:", error)
-      alert("Error al generar proposiciones. Por favor, intenta de nuevo.")
-    } finally {
-      setIsGenerating(false)
-    }
   }
 
   const startRecording = async () => {
@@ -1690,8 +1803,10 @@ export default function PropositionsApp() {
   }
 
   const handleContinue = () => {
-    if (currentIndex < propositions.length - 1) {
-      setCurrentIndex(currentIndex + 1)
+    const nextIndex = findNextFilledIndex(currentIndex)
+
+    if (nextIndex !== -1) {
+      setCurrentIndex(nextIndex)
       setViewState("recording")
       setCountdown(5)
     } else {
@@ -1721,7 +1836,7 @@ export default function PropositionsApp() {
   }
 
   const goToProposition = (index: number) => {
-    if (!propositions[index] || isRecording) {
+    if (!hasContentAtIndex(index) || isRecording) {
       return
     }
 
@@ -1741,15 +1856,28 @@ export default function PropositionsApp() {
 
   useEffect(() => {
     if (viewState === "overview" && pendingPracticeIndex !== null) {
-      const targetIndex = pendingPracticeIndex
-      if (typeof targetIndex === "number" && propositions[targetIndex]) {
-        setPendingPracticeIndex(null)
+      const requestedIndex = pendingPracticeIndex
+      const targetIndex =
+        typeof requestedIndex === "number" && hasContentAtIndex(requestedIndex)
+          ? requestedIndex
+          : findNextFilledIndex(
+              typeof requestedIndex === "number" ? requestedIndex - 1 : -1,
+            )
+
+      setPendingPracticeIndex(null)
+
+      if (targetIndex !== -1) {
         setCurrentIndex(targetIndex)
         setViewState("recording")
         setCountdown(5)
       }
     }
-  }, [viewState, pendingPracticeIndex, propositions])
+  }, [
+    viewState,
+    pendingPracticeIndex,
+    hasContentAtIndex,
+    findNextFilledIndex,
+  ])
 
   const expandCustomProposition = async (subtopicId: string, propositionId: string) => {
     if (!currentThemeId) return
@@ -1764,12 +1892,28 @@ export default function PropositionsApp() {
     const proposition = subtopic.propositions[index]
     if (proposition.type !== "custom") return
 
+    if (!proposition.text.trim()) {
+      alert("Agrega contenido a la proposición personalizada antes de generar variantes.")
+      return
+    }
+
     setGeneratingPropositionId(propositionId)
     try {
-      const result = await generatePropositions(proposition.text)
+      const { model, systemPrompt } = getGroqSettings()
 
-      if ("error" in result) {
-        throw new Error(result.error)
+      const variants: { type: PropositionVariant; text: string }[] = []
+      for (const variant of [
+        "reciproco",
+        "inverso",
+        "contrareciproco",
+      ] as PropositionVariant[]) {
+        const result = await generatePropositionVariant(proposition.text, variant, model, systemPrompt)
+
+        if ("error" in result) {
+          throw new Error(result.error)
+        }
+
+        variants.push({ type: variant, text: result.text })
       }
 
       const generated: Proposition[] = [
@@ -1780,27 +1924,13 @@ export default function PropositionsApp() {
           text: proposition.text,
           audios: proposition.audios,
         },
-        {
-          id: `${propositionId}-reciproco`,
-          type: "reciproco",
-          label: propositionTypeLabels.reciproco,
-          text: result.reciproco,
+        ...variants.map((variant) => ({
+          id: `${propositionId}-${variant.type}`,
+          type: variant.type,
+          label: propositionTypeLabels[variant.type as PropositionType],
+          text: variant.text,
           audios: [],
-        },
-        {
-          id: `${propositionId}-inverso`,
-          type: "inverso",
-          label: propositionTypeLabels.inverso,
-          text: result.inverso,
-          audios: [],
-        },
-        {
-          id: `${propositionId}-contrareciproco`,
-          type: "contrareciproco",
-          label: propositionTypeLabels.contrareciproco,
-          text: result.contrareciproco,
-          audios: [],
-        },
+        })),
       ]
 
       updateSubtopicById(currentThemeId, subtopicId, (current) => {
@@ -2094,20 +2224,12 @@ export default function PropositionsApp() {
                       className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <Button
-                    onClick={() =>
-                      subtopic.propositions
-                        ? openSubtopicDetail(subtopic.id)
-                        : evaluatePropositions(subtopic.id)
-                    }
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
-                    {isGenerating
-                      ? "Generando..."
-                      : subtopic.propositions
-                        ? "Ver subtema"
-                        : "Generar proposiciones"}
-                  </Button>
+                      onClick={() => openSubtopicDetail(subtopic.id)}
+                      disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
+                      className="whitespace-nowrap"
+                    >
+                      Ver subtema
+                    </Button>
                   </div>
                 )
               })}
@@ -2170,13 +2292,10 @@ export default function PropositionsApp() {
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
-                Este subtema aún no tiene proposiciones generadas.
+                Este subtema no tiene proposiciones disponibles en este momento.
               </p>
-              <Button
-                onClick={() => evaluatePropositions(currentSubtopic.id)}
-                disabled={isGenerating || !currentSubtopic.text.trim()}
-              >
-                {isGenerating ? "Generando..." : "Generar proposiciones"}
+              <Button onClick={() => ensureStandardPropositions(currentTheme.id, currentSubtopic.id)}>
+                Restaurar proposiciones base
               </Button>
             </Card>
           ) : (
@@ -2184,6 +2303,10 @@ export default function PropositionsApp() {
               <Card className="p-8 space-y-6">
                 {propositions.map((prop, index) => {
                   const isSelected = focusedItem?.scope === "proposition" && focusedItem.id === prop.id
+                  const hasContent = prop.text.trim().length > 0
+                  const isStandardVariant =
+                    prop.type !== "custom" && prop.type !== "condicion"
+
                   return (
                     <div
                       key={prop.id}
@@ -2200,10 +2323,39 @@ export default function PropositionsApp() {
                           {prop.label}
                         </p>
                         <div className="text-lg leading-relaxed text-foreground break-words">
-                          <MathText text={prop.text} />
+                          {hasContent ? (
+                            <MathText text={prop.text} />
+                          ) : (
+                            <p className="text-sm italic text-muted-foreground">
+                              Aún no has generado esta proposición.
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        {isStandardVariant && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => generateVariantForSubtopic(prop)}
+                            disabled={
+                              generatingVariantId === prop.id ||
+                              generatingPropositionId !== null ||
+                              isRecording
+                            }
+                            className="whitespace-nowrap"
+                          >
+                            {generatingVariantId === prop.id ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                              </>
+                            ) : hasContent ? (
+                              "Regenerar"
+                            ) : (
+                              "Generar"
+                            )}
+                          </Button>
+                        )}
                         {prop.type === "custom" && currentSubtopic && (
                           <Button
                             variant="outline"
@@ -2211,7 +2363,7 @@ export default function PropositionsApp() {
                             onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
                             disabled={
                               generatingPropositionId === prop.id ||
-                              isGenerating ||
+                              isVariantGenerationActive ||
                               isRecording
                             }
                             className="whitespace-nowrap"
@@ -2242,7 +2394,7 @@ export default function PropositionsApp() {
                           onClick={() => handleRewriteProposition(prop)}
                           className="hover:bg-primary/10"
                           title="Rehacer esta proposición"
-                          disabled={rewritingPropositionId === prop.id}
+                          disabled={rewritingPropositionId === prop.id || !hasContent}
                         >
                           {rewritingPropositionId === prop.id ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
@@ -2256,6 +2408,7 @@ export default function PropositionsApp() {
                           onClick={() => goToProposition(index)}
                           className="hover:bg-primary/10"
                           title="Practicar esta proposición"
+                          disabled={!hasContent}
                         >
                           <Headphones className="w-5 h-5" />
                         </Button>
@@ -2300,6 +2453,9 @@ export default function PropositionsApp() {
   }
 
   const currentProposition = propositions[currentIndex]
+  const currentPropositionHasContent = Boolean(
+    currentProposition?.text && currentProposition.text.trim().length > 0,
+  )
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-8">
@@ -2364,7 +2520,13 @@ export default function PropositionsApp() {
                 {currentProposition?.label}
               </p>
               <div className="text-2xl leading-relaxed text-foreground break-words">
-                <MathText text={currentProposition?.text ?? ""} />
+                {currentPropositionHasContent ? (
+                  <MathText text={currentProposition?.text ?? ""} />
+                ) : (
+                  <p className="text-base italic text-muted-foreground">
+                    Genera o selecciona una proposición para practicarla.
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex flex-col items-end gap-3">
@@ -2375,7 +2537,9 @@ export default function PropositionsApp() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleRewriteProposition(currentProposition)}
-                    disabled={rewritingPropositionId === currentProposition.id}
+                    disabled={
+                      rewritingPropositionId === currentProposition.id || !currentPropositionHasContent
+                    }
                     className="whitespace-nowrap"
                   >
                     {rewritingPropositionId === currentProposition.id ? (
@@ -2395,7 +2559,7 @@ export default function PropositionsApp() {
                   onClick={() => expandCustomProposition(currentSubtopic.id, currentProposition.id)}
                   disabled={
                     generatingPropositionId === currentProposition.id ||
-                    isGenerating ||
+                    isVariantGenerationActive ||
                     isRecording
                   }
                   className="whitespace-nowrap"

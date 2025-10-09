@@ -14,13 +14,13 @@ interface SettingsModalProps {
 }
 
 const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Según esta condición crea su recíproco, inverso, contra-recíproco.
+const DEFAULT_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después.
 
-Salida obligatoria en formato JSON:
+Recibirás una condición base y el tipo de proposición a generar (recíproco, inverso o contra-recíproco). Debes devolver únicamente la proposición solicitada.
+
+Formato de salida (SOLO JSON, sin explicaciones):
 {
-  "reciproco": "texto del recíproco",
-  "inverso": "texto del inverso",
-  "contrareciproco": "texto del contra-recíproco"
+  "proposicion": "texto de la proposición solicitada"
 }`
 
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
@@ -29,13 +29,40 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [availableModels, setAvailableModels] = useState<string[]>([])
 
   useEffect(() => {
-    if (open) {
-      const savedModel = localStorage.getItem("groq_model") || DEFAULT_MODEL
-      const savedPrompt = localStorage.getItem("groq_prompt") || DEFAULT_PROMPT
-      setModel(savedModel)
-      setPrompt(savedPrompt)
+    if (!open) {
+      return
+    }
 
-      getAvailableModels().then(setAvailableModels)
+    const savedModel = localStorage.getItem("groq_model") || DEFAULT_MODEL
+    const savedPrompt = localStorage.getItem("groq_prompt") || DEFAULT_PROMPT
+    setModel(savedModel)
+    setPrompt(savedPrompt)
+
+    let isActive = true
+
+    const loadModels = async () => {
+      try {
+        const models = await getAvailableModels()
+        if (!isActive) return
+
+        const normalized = Array.from(new Set(models.length ? models : [DEFAULT_MODEL]))
+
+        if (!normalized.includes(savedModel)) {
+          normalized.unshift(savedModel)
+        }
+
+        setAvailableModels(normalized)
+      } catch (error) {
+        console.error("[v0] Error loading Groq models:", error)
+        if (!isActive) return
+        setAvailableModels((prev) => (prev.length ? prev : [DEFAULT_MODEL]))
+      }
+    }
+
+    loadModels()
+
+    return () => {
+      isActive = false
     }
   }, [open])
 
@@ -72,6 +99,9 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                     {modelOption}
                   </SelectItem>
                 ))}
+                {availableModels.length === 0 && (
+                  <SelectItem value={DEFAULT_MODEL}>{DEFAULT_MODEL}</SelectItem>
+                )}
               </SelectContent>
             </Select>
             <p className="text-sm text-muted-foreground">Selecciona el modelo de Groq a utilizar</p>

@@ -1,15 +1,13 @@
 "use server"
 
 const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes o después.
+const DEFAULT_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después.
 
-Dada una condición lógica, genera su recíproco, inverso y contra-recíproco.
+Recibirás una condición base y el tipo de proposición a generar (recíproco, inverso o contra-recíproco). Debes devolver únicamente la proposición solicitada.
 
 Formato de salida (SOLO JSON, sin explicaciones):
 {
-  "reciproco": "texto del recíproco",
-  "inverso": "texto del inverso",
-  "contrareciproco": "texto del contra-recíproco"
+  "proposicion": "texto de la proposición solicitada"
 }`
 
 const DEFAULT_REWRITE_PROMPT = `Eres un asistente que reescribe proposiciones lógicas. Recibirás una instrucción en español que siempre incluye una condición base y el tipo de proposición deseado.
@@ -21,16 +19,28 @@ Responde ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o de
 
 El texto de la proposición debe ser claro, gramaticalmente correcto y mantener coherencia lógica con la instrucción recibida.`
 
-export async function generatePropositions(
+const VARIANT_LABELS = {
+  reciproco: "recíproco",
+  inverso: "inverso",
+  contrareciproco: "contra-recíproco",
+} as const
+
+export type PropositionVariant = keyof typeof VARIANT_LABELS
+
+export async function generatePropositionVariant(
   condition: string,
+  variant: PropositionVariant,
   model?: string,
   systemPrompt?: string,
-): Promise<{ reciproco: string; inverso: string; contrareciproco: string } | { error: string }> {
+): Promise<{ text: string } | { error: string }> {
   try {
-    console.log("[v0] Generating propositions for:", condition)
-
     if (!condition || typeof condition !== "string") {
       return { error: "Condición inválida" }
+    }
+
+    const variantLabel = VARIANT_LABELS[variant]
+    if (!variantLabel) {
+      return { error: "Tipo de proposición no soportado" }
     }
 
     const apiKey = process.env.GROQ_API_KEY_CUSTOM || process.env.GROQ_API_KEY
@@ -55,18 +65,18 @@ export async function generatePropositions(
           },
           {
             role: "user",
-            content: condition,
+            content: `Condición base: ${condition}\nTipo solicitado: ${variantLabel}.`,
           },
         ],
         temperature: 0.7,
-        max_tokens: 1024,
+        max_tokens: 512,
         response_format: { type: "json_object" },
       }),
     })
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
-      console.error("[v0] Groq API error:", errorData)
+      console.error("[v0] Groq API error (variant):", errorData)
       return { error: `Error de Groq API: ${response.status} ${response.statusText}` }
     }
 
@@ -77,32 +87,28 @@ export async function generatePropositions(
       return { error: "Respuesta vacía de Groq" }
     }
 
-    console.log("[v0] Groq response:", text)
-
-    let result
+    let parsed
     try {
-      result = JSON.parse(text)
+      parsed = JSON.parse(text)
     } catch (parseError) {
       const jsonMatch = text.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
-        result = JSON.parse(jsonMatch[0])
+        parsed = JSON.parse(jsonMatch[0])
       } else {
         throw parseError
       }
     }
 
-    if (!result.reciproco || !result.inverso || !result.contrareciproco) {
+    if (!parsed.proposicion || typeof parsed.proposicion !== "string") {
       return { error: "Respuesta de Groq no tiene el formato esperado" }
     }
 
-    return {
-      reciproco: result.reciproco,
-      inverso: result.inverso,
-      contrareciproco: result.contrareciproco,
-    }
+    return { text: parsed.proposicion }
   } catch (error) {
-    console.error("[v0] Error generating propositions:", error)
-    return { error: `Error al generar proposiciones: ${error instanceof Error ? error.message : String(error)}` }
+    console.error("[v0] Error generating proposition variant:", error)
+    return {
+      error: `Error al generar la proposición: ${error instanceof Error ? error.message : String(error)}`,
+    }
   }
 }
 
@@ -184,11 +190,42 @@ export async function rewriteProposition(
 }
 
 export async function getAvailableModels(): Promise<string[]> {
-  return [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
-  ]
+  const apiKey = process.env.GROQ_API_KEY_CUSTOM || process.env.GROQ_API_KEY
+
+  if (!apiKey) {
+    return [DEFAULT_MODEL]
+  }
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/models", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error("[v0] Groq API error (models):", errorData)
+      return [DEFAULT_MODEL]
+    }
+
+    const payload = await response.json()
+    const models: string[] = Array.isArray(payload?.data)
+      ? payload.data
+          .map((entry: any) => (typeof entry?.id === "string" ? entry.id : null))
+          .filter((id: string | null): id is string => Boolean(id))
+      : []
+
+    const uniqueModels = Array.from(new Set(models))
+
+    if (!uniqueModels.includes(DEFAULT_MODEL)) {
+      uniqueModels.unshift(DEFAULT_MODEL)
+    }
+
+    return uniqueModels
+  } catch (error) {
+    console.error("[v0] Error fetching Groq models:", error)
+    return [DEFAULT_MODEL]
+  }
 }
