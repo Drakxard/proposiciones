@@ -14,6 +14,7 @@ import {
   Loader2,
   RotateCcw,
   History,
+  ClipboardPaste,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -36,6 +37,7 @@ import {
   writeBlobFile,
   readBlobFile,
 } from "@/lib/file-system"
+import { DEFAULT_SYSTEM_PROMPT, ensureAllowedModel, UNIVERSAL_MODEL_ID } from "@/lib/groq"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 
@@ -235,6 +237,8 @@ export default function PropositionsApp() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [importInitialText, setImportInitialText] = useState("")
   const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
+  const [groqModel, setGroqModel] = useState(UNIVERSAL_MODEL_ID)
+  const [groqPrompt, setGroqPrompt] = useState(DEFAULT_SYSTEM_PROMPT)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
@@ -262,6 +266,26 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+
+  const refreshGroqPreferences = useCallback(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    try {
+      const storedModel = window.localStorage.getItem("groq_model")
+      const storedPrompt = window.localStorage.getItem("groq_prompt")
+
+      setGroqModel(ensureAllowedModel(storedModel))
+      setGroqPrompt(
+        storedPrompt && storedPrompt.trim().length > 0 ? storedPrompt : DEFAULT_SYSTEM_PROMPT,
+      )
+    } catch (error) {
+      console.warn("[v0] No se pudieron cargar las preferencias de Groq:", error)
+      setGroqModel(UNIVERSAL_MODEL_ID)
+      setGroqPrompt(DEFAULT_SYSTEM_PROMPT)
+    }
+  }, [])
 
   const applyStoredAppState = (state: StoredAppState) => {
     const normalizedCurrent = normalizeStoredEra(state.currentEra)
@@ -859,6 +883,27 @@ export default function PropositionsApp() {
   useEffect(() => {
     setFocusedItem(null)
   }, [viewState])
+
+  useEffect(() => {
+    if (showSettingsModal) {
+      return
+    }
+
+    refreshGroqPreferences()
+  }, [showSettingsModal, refreshGroqPreferences])
+
+  useEffect(() => {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (!event.key || (event.key !== "groq_model" && event.key !== "groq_prompt")) {
+        return
+      }
+
+      refreshGroqPreferences()
+    }
+
+    window.addEventListener("storage", handleStorageChange)
+    return () => window.removeEventListener("storage", handleStorageChange)
+  }, [refreshGroqPreferences])
 
   useEffect(() => {
     if (isLoadingData) return
@@ -1502,6 +1547,48 @@ export default function PropositionsApp() {
     }))
   }
 
+  const addManualProposition = () => {
+    if (!currentThemeId || !currentSubtopic) {
+      return
+    }
+
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const defaultValue = currentSubtopic.text?.trim() ?? ""
+    const userInput = window.prompt(
+      "Escribe la proposición que deseas agregar manualmente:",
+      defaultValue,
+    )
+
+    if (!userInput || !userInput.trim()) {
+      return
+    }
+
+    const trimmedText = userInput.trim()
+    const customCount =
+      currentSubtopic.propositions?.filter((prop) => prop.type === "custom").length ?? 0
+
+    const newProposition: Proposition = {
+      id: `custom-${Date.now()}`,
+      type: "custom",
+      label: `Proposición personalizada ${customCount + 1}`,
+      text: trimmedText,
+      audios: [],
+    }
+
+    updateSubtopicById(currentThemeId, currentSubtopic.id, (subtopic) => ({
+      ...subtopic,
+      propositions: subtopic.propositions
+        ? [...subtopic.propositions, newProposition]
+        : [newProposition],
+    }))
+
+    setFocusedItem({ scope: "proposition", id: newProposition.id })
+    setPendingPracticeIndex(null)
+  }
+
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
@@ -1527,7 +1614,7 @@ export default function PropositionsApp() {
     setViewState("overview")
   }
 
-  const evaluatePropositions = async (subtopicId: string) => {
+  const evaluatePropositions = async (subtopicId: string, options?: { force?: boolean }) => {
     if (!currentThemeId) return
 
     const theme = themes.find((t) => t.id === currentThemeId)
@@ -1537,7 +1624,9 @@ export default function PropositionsApp() {
     console.log("[v0] Evaluating propositions for subtopic:", subtopic)
     console.log("[v0] Subtopic has propositions?", !!subtopic.propositions)
 
-    if (subtopic.propositions && subtopic.propositions.length > 0) {
+    const forceRegeneration = options?.force ?? false
+
+    if (!forceRegeneration && subtopic.propositions && subtopic.propositions.length > 0) {
       console.log("[v0] Propositions already exist, going to interface")
       setCurrentSubtopicId(subtopicId)
       setCurrentIndex(0)
@@ -1549,7 +1638,7 @@ export default function PropositionsApp() {
     console.log("[v0] No propositions found, generating with Groq...")
     setIsGenerating(true)
     try {
-      const result = await generatePropositions(subtopic.text)
+      const result = await generatePropositions(subtopic.text, groqModel, groqPrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -1766,7 +1855,7 @@ export default function PropositionsApp() {
 
     setGeneratingPropositionId(propositionId)
     try {
-      const result = await generatePropositions(proposition.text)
+      const result = await generatePropositions(proposition.text, groqModel, groqPrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -1857,7 +1946,7 @@ export default function PropositionsApp() {
     setRewritingPropositionId(target.id)
 
     try {
-      const result = await rewriteProposition(userPrompt)
+      const result = await rewriteProposition(userPrompt, groqModel)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -2046,14 +2135,23 @@ export default function PropositionsApp() {
                 placeholder="Tema sin nombre"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addSubtopic}
+                className="gap-2"
+                title="Agregar una nueva fila de subtema"
+              >
+                <Plus className="w-4 h-4" /> Nueva fila
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={importSubtopicFromClipboard}
                 title="Importar subtema desde portapapeles"
               >
-                <Plus className="w-5 h-5" />
+                <ClipboardPaste className="w-5 h-5" />
               </Button>
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
                 <Settings className="w-5 h-5" />
@@ -2068,46 +2166,54 @@ export default function PropositionsApp() {
           ) : subtopics.length === 0 ? (
             <Card className="p-12 text-center space-y-4">
               <p className="text-muted-foreground">
-                Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles.
+                Este tema aún no tiene subtemas. Usa «Nueva fila» para agregarlos manualmente o el
+                icono del portapapeles para importarlos.
               </p>
             </Card>
           ) : (
-            <Card className="p-6 space-y-4">
-              {subtopics.map((subtopic) => {
+            <Card className="p-6 space-y-3">
+              {subtopics.map((subtopic, index) => {
                 const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
                 return (
                   <div
                     key={subtopic.id}
-                    className={`flex items-center gap-4 rounded-lg p-2 transition ${
-                      isSelected ? "bg-primary/10" : "hover:bg-muted/40"
+                    className={`grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border p-3 transition ${
+                      isSelected
+                        ? "border-primary bg-primary/5"
+                        : "border-transparent hover:border-border hover:bg-muted/30"
                     }`}
                     onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                     onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                     tabIndex={0}
                   >
+                    <span className="w-10 text-sm font-semibold text-muted-foreground text-center">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
                     <input
                       type="text"
                       value={subtopic.text}
                       onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
                       onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                       placeholder="Ingresa una condición o teorema..."
-                      className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     />
-                    <Button
-                    onClick={() =>
-                      subtopic.propositions
-                        ? openSubtopicDetail(subtopic.id)
-                        : evaluatePropositions(subtopic.id)
-                    }
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
-                    {isGenerating
-                      ? "Generando..."
-                      : subtopic.propositions
-                        ? "Ver subtema"
-                        : "Generar proposiciones"}
-                  </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() =>
+                          subtopic.propositions
+                            ? openSubtopicDetail(subtopic.id)
+                            : evaluatePropositions(subtopic.id)
+                        }
+                        disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
+                        className="whitespace-nowrap"
+                      >
+                        {isGenerating
+                          ? "Generando..."
+                          : subtopic.propositions
+                            ? "Ver subtema"
+                            : "Generar proposiciones"}
+                      </Button>
+                    </div>
                   </div>
                 )
               })}
@@ -2167,13 +2273,52 @@ export default function PropositionsApp() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
+          <div className="rounded-xl border bg-card/40 p-6 space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Subtema seleccionado
+              </p>
+              <div className="text-xl font-semibold text-foreground leading-relaxed break-words">
+                <MathText text={currentSubtopic.text || "Subtema sin nombre"} />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm text-muted-foreground">
+                {propositions.length === 1
+                  ? "1 proposición registrada"
+                  : `${propositions.length} proposiciones registradas`}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => evaluatePropositions(currentSubtopic.id, { force: true })}
+                  disabled={isGenerating || !currentSubtopic.text.trim()}
+                  className="whitespace-nowrap"
+                >
+                  {isGenerating ? "Generando..." : "Generar automáticamente"}
+                </Button>
+                <Button
+                  variant="default"
+                  size="icon"
+                  onClick={addManualProposition}
+                  title="Agregar proposición manual"
+                  disabled={isGenerating}
+                >
+                  <Plus className="w-5 h-5" />
+                  <span className="sr-only">Agregar proposición manual</span>
+                </Button>
+              </div>
+            </div>
+          </div>
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
-                Este subtema aún no tiene proposiciones generadas.
+                Este subtema aún no tiene proposiciones. Usa el botón [+] para agregarlas manualmente o
+                genera una propuesta automática.
               </p>
               <Button
-                onClick={() => evaluatePropositions(currentSubtopic.id)}
+                onClick={() => evaluatePropositions(currentSubtopic.id, { force: true })}
                 disabled={isGenerating || !currentSubtopic.text.trim()}
               >
                 {isGenerating ? "Generando..." : "Generar proposiciones"}
