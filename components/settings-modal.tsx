@@ -7,33 +7,27 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getAvailableModels } from "@/app/actions"
+import { DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_REWRITE_PROMPT } from "@/lib/prompts"
 
 interface SettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Según esta condición crea su recíproco, inverso, contra-recíproco.
-
-Salida obligatoria en formato JSON:
-{
-  "reciproco": "texto del recíproco",
-  "inverso": "texto del inverso",
-  "contrareciproco": "texto del contra-recíproco"
-}`
-
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
+  const [rewritePrompt, setRewritePrompt] = useState(DEFAULT_REWRITE_PROMPT)
   const [availableModels, setAvailableModels] = useState<string[]>([])
 
   useEffect(() => {
     if (open) {
       const savedModel = localStorage.getItem("groq_model") || DEFAULT_MODEL
       const savedPrompt = localStorage.getItem("groq_prompt") || DEFAULT_PROMPT
+      const savedRewritePrompt = localStorage.getItem("groq_rewrite_prompt") || DEFAULT_REWRITE_PROMPT
       setModel(savedModel)
       setPrompt(savedPrompt)
+      setRewritePrompt(savedRewritePrompt)
 
       getAvailableModels().then(setAvailableModels)
     }
@@ -42,14 +36,17 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const handleSave = () => {
     localStorage.setItem("groq_model", model)
     localStorage.setItem("groq_prompt", prompt)
+    localStorage.setItem("groq_rewrite_prompt", rewritePrompt)
     onOpenChange(false)
   }
 
   const handleReset = () => {
     setModel(DEFAULT_MODEL)
     setPrompt(DEFAULT_PROMPT)
+    setRewritePrompt(DEFAULT_REWRITE_PROMPT)
     localStorage.removeItem("groq_model")
     localStorage.removeItem("groq_prompt")
+    localStorage.removeItem("groq_rewrite_prompt")
   }
 
   return (
@@ -88,6 +85,20 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             />
             <p className="text-sm text-muted-foreground">
               Este prompt se enviará a Groq junto con la condición ingresada
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rewrite-prompt">Prompt para rehacer proposiciones</Label>
+            <Textarea
+              id="rewrite-prompt"
+              value={rewritePrompt}
+              onChange={(e) => setRewritePrompt(e.target.value)}
+              rows={10}
+              className="font-mono text-sm"
+            />
+            <p className="text-sm text-muted-foreground">
+              Se utilizará cuando ajustes una proposición individual.
             </p>
           </div>
 

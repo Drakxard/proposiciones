@@ -100,6 +100,22 @@ const normalizeBackslashes = (input: string): string => {
   return result
 }
 
+const getGroqSettings = (): {
+  model?: string
+  prompt?: string
+  rewritePrompt?: string
+} => {
+  if (typeof window === "undefined") {
+    return {}
+  }
+
+  const model = localStorage.getItem("groq_model") || undefined
+  const prompt = localStorage.getItem("groq_prompt") || undefined
+  const rewritePrompt = localStorage.getItem("groq_rewrite_prompt") || undefined
+
+  return { model, prompt, rewritePrompt }
+}
+
 interface Era {
   id: string
   name: string
@@ -1631,7 +1647,8 @@ export default function PropositionsApp() {
     console.log("[v0] No propositions found, generating with Groq...")
     setIsGenerating(true)
     try {
-      const result = await generatePropositions(subtopic.text)
+      const { model: storedModel, prompt: storedPrompt } = getGroqSettings()
+      const result = await generatePropositions(subtopic.text, storedModel, storedPrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -1848,7 +1865,8 @@ export default function PropositionsApp() {
 
     setGeneratingPropositionId(propositionId)
     try {
-      const result = await generatePropositions(proposition.text)
+      const { model: storedModel, prompt: storedPrompt } = getGroqSettings()
+      const result = await generatePropositions(proposition.text, storedModel, storedPrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -1939,7 +1957,8 @@ export default function PropositionsApp() {
     setRewritingPropositionId(target.id)
 
     try {
-      const result = await rewriteProposition(userPrompt)
+      const { model: storedModel, rewritePrompt: storedRewritePrompt } = getGroqSettings()
+      const result = await rewriteProposition(userPrompt, storedModel, storedRewritePrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
