@@ -13,10 +13,19 @@ import {
   ArrowLeft,
   Loader2,
   RotateCcw,
+  History,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
+import { ErasModal, type EraSummary } from "@/components/eras-modal"
 import { generatePropositions, rewriteProposition } from "./actions"
-import { saveThemes, loadThemes, saveAudio, loadAudios } from "@/lib/storage"
+import {
+  loadThemes,
+  loadAudios,
+  saveAppState,
+  loadAppState,
+  type StoredAppState,
+  type StoredEra,
+} from "@/lib/storage"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -52,6 +61,117 @@ interface Theme {
 }
 
 type ViewState = "themes" | "subtopics" | "overview" | "recording" | "listening" | "countdown" | "prompt"
+
+interface Era {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  closedAt: number | null
+  themes: Theme[]
+}
+
+const createEraId = () => `era-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+const cloneThemes = (themes: Theme[]): Theme[] =>
+  themes.map((theme) => ({
+    ...theme,
+    subtopics: theme.subtopics.map((subtopic) => ({
+      ...subtopic,
+      propositions: subtopic.propositions
+        ? subtopic.propositions.map((prop) => ({
+            ...prop,
+            audios: [...prop.audios],
+          }))
+        : null,
+    })),
+  }))
+
+const cloneEra = (era: Era): Era => ({
+  ...era,
+  themes: cloneThemes(era.themes),
+})
+
+const summarizeEra = (era: Era): EraSummary => {
+  let subtopicCount = 0
+  let propositionCount = 0
+  let audioCount = 0
+
+  for (const theme of era.themes) {
+    subtopicCount += theme.subtopics.length
+    for (const subtopic of theme.subtopics) {
+      if (!subtopic.propositions) continue
+      propositionCount += subtopic.propositions.length
+      for (const prop of subtopic.propositions) {
+        audioCount += prop.audios.length
+      }
+    }
+  }
+
+  return {
+    id: era.id,
+    name: era.name,
+    createdAt: era.createdAt,
+    updatedAt: era.updatedAt,
+    closedAt: era.closedAt,
+    themeCount: era.themes.length,
+    subtopicCount,
+    propositionCount,
+    audioCount,
+  }
+}
+
+const DEFAULT_INITIAL_THEMES: Theme[] = [
+  {
+    id: "theme-1",
+    name: "Tema de ejemplo",
+    subtopics: [
+      { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
+    ],
+  },
+]
+
+const createBlankEra = (name?: string): Era => {
+  const timestamp = Date.now()
+  return {
+    id: createEraId(),
+    name: name ?? `Ciclo ${new Date(timestamp).toLocaleDateString()}`,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    closedAt: null,
+    themes: [],
+  }
+}
+
+const normalizeStoredEra = (storedEra: StoredEra): Era => {
+  const createdAt = storedEra.createdAt ?? Date.now()
+  const updatedAt = storedEra.updatedAt ?? createdAt
+
+  return {
+    id: storedEra.id ?? createEraId(),
+    name: storedEra.name ?? "Ciclo sin nombre",
+    createdAt,
+    updatedAt,
+    closedAt: storedEra.closedAt ?? null,
+    themes: (storedEra.themes ?? []).map((theme, themeIndex) => ({
+      id: theme.id ?? `theme-${themeIndex}`,
+      name: theme.name ?? `Tema ${themeIndex + 1}`,
+      subtopics: (theme.subtopics ?? []).map((subtopic, subIndex) => ({
+        id: subtopic.id ?? `${theme.id ?? `theme-${themeIndex}`}-subtopic-${subIndex}`,
+        text: subtopic.text ?? "",
+        propositions: subtopic.propositions
+          ? subtopic.propositions.map((prop, propIndex) => ({
+              id: prop.id ?? `${subtopic.id ?? `subtopic-${subIndex}`}-${propIndex}`,
+              type: (prop.type ?? "custom") as PropositionKind,
+              label: prop.label ?? `Proposición ${propIndex + 1}`,
+              text: prop.text ?? "",
+              audios: prop.audios ? [...prop.audios] : [],
+            }))
+          : null,
+      })),
+    })),
+  }
+}
 
 const tryParseAsArray = (text: string): any[] | null => {
   try {
@@ -172,19 +292,22 @@ const parseClipboardJson = (text: string): any[] | null => {
   return null
 }
 export default function PropositionsApp() {
-  const [themes, setThemes] = useState<Theme[]>([
-    {
-      id: "theme-1",
-      name: "Tema de ejemplo",
-      subtopics: [
-        { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
-      ],
-    },
-  ])
+  const initialTimestamp = useMemo(() => Date.now(), [])
+  const [themes, setThemes] = useState<Theme[]>(() => cloneThemes(DEFAULT_INITIAL_THEMES))
+  const [currentEra, setCurrentEra] = useState<Era>(() => ({
+    id: createEraId(),
+    name: "Ciclo inicial",
+    createdAt: initialTimestamp,
+    updatedAt: initialTimestamp,
+    closedAt: null,
+    themes: cloneThemes(DEFAULT_INITIAL_THEMES),
+  }))
+  const [eraHistory, setEraHistory] = useState<Era[]>([])
   const [currentThemeId, setCurrentThemeId] = useState<string | null>(null)
   const [currentSubtopicId, setCurrentSubtopicId] = useState<string | null>(null)
   const [viewState, setViewState] = useState<ViewState>("themes")
   const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [showErasModal, setShowErasModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
@@ -212,6 +335,132 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+
+  const applyStoredAppState = (state: StoredAppState) => {
+    const normalizedCurrent = normalizeStoredEra(state.currentEra)
+    const normalizedHistory = (state.eraHistory ?? []).map(normalizeStoredEra)
+
+    setCurrentEra(normalizedCurrent)
+    setThemes(cloneThemes(normalizedCurrent.themes))
+    setEraHistory(normalizedHistory)
+  }
+
+  const buildStoredAppState = (): StoredAppState => ({
+    currentEra: cloneEra({ ...currentEra, themes: cloneThemes(themes) }) as StoredEra,
+    eraHistory: eraHistory.map((era) => cloneEra(era) as StoredEra),
+  })
+
+  const closeCurrentCycle = () => {
+    if (isLoadingData) return
+    const confirmed = window.confirm(
+      "¿Cerrar el ciclo actual? Se guardará en el historial y comenzarás uno nuevo.",
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    const timestamp = Date.now()
+    const archivedEra = {
+      ...cloneEra({ ...currentEra, themes: cloneThemes(themes) }),
+      updatedAt: timestamp,
+      closedAt: timestamp,
+    }
+
+    setEraHistory((prev) => [archivedEra, ...prev])
+
+    const newEra = createBlankEra(`Nuevo ciclo ${new Date(timestamp).toLocaleDateString()}`)
+    setCurrentEra(newEra)
+    setThemes([])
+    setCurrentThemeId(null)
+    setCurrentSubtopicId(null)
+    setViewState("themes")
+    setPendingPracticeIndex(null)
+    setFocusedItem(null)
+    setRewritePreview(null)
+    setCurrentIndex(0)
+    setIsRecording(false)
+    setCountdown(5)
+    setShowErasModal(false)
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+  }
+
+  const handleSelectEra = (eraId: string) => {
+    const target = eraHistory.find((era) => era.id === eraId)
+    if (!target) {
+      return
+    }
+
+    const snapshot = cloneEra({ ...currentEra, themes: cloneThemes(themes) })
+    const remainingHistory = eraHistory.filter((era) => era.id !== eraId)
+
+    setEraHistory([snapshot, ...remainingHistory])
+
+    const reopenedEra = {
+      ...cloneEra(target),
+      closedAt: null,
+      updatedAt: Date.now(),
+    }
+
+    setCurrentEra(reopenedEra)
+    setThemes(cloneThemes(target.themes))
+    setShowErasModal(false)
+    setViewState("themes")
+    setCurrentThemeId(null)
+    setCurrentSubtopicId(null)
+    setPendingPracticeIndex(null)
+    setFocusedItem(null)
+    setRewritePreview(null)
+    setCurrentIndex(0)
+    setIsRecording(false)
+    setCountdown(5)
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+  }
+
+  const handleRenameEra = (eraId: string, name: string) => {
+    if (eraId === currentEra.id) {
+      setCurrentEra((prev) => ({
+        ...prev,
+        name,
+        updatedAt: Date.now(),
+      }))
+    } else {
+      setEraHistory((prev) =>
+        prev.map((era) =>
+          era.id === eraId
+            ? {
+                ...era,
+                name,
+                updatedAt: Date.now(),
+              }
+            : era,
+        ),
+      )
+    }
+  }
+
+  const currentEraSummary = useMemo(() => summarizeEra(currentEra), [currentEra])
+  const historySummaries = useMemo(() => eraHistory.map(summarizeEra), [eraHistory])
+
+  const sharedModals = (
+    <>
+      <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+      <ErasModal
+        open={showErasModal}
+        onOpenChange={setShowErasModal}
+        currentEra={currentEraSummary}
+        history={historySummaries}
+        onSelectEra={handleSelectEra}
+        onRenameEra={handleRenameEra}
+      />
+    </>
+  )
 
   const currentTheme = currentThemeId ? themes.find((t) => t.id === currentThemeId) ?? null : null
   const subtopics = currentTheme?.subtopics ?? []
@@ -501,9 +750,15 @@ export default function PropositionsApp() {
         return
       }
 
-      if (e.key === "g" && (viewState === "themes" || viewState === "subtopics")) {
+      if (e.key.toLowerCase() === "g") {
         e.preventDefault()
-        setShowSettingsModal(true)
+        closeCurrentCycle()
+        return
+      }
+
+      if (e.key.toLowerCase() === "h") {
+        e.preventDefault()
+        setShowErasModal(true)
         return
       }
 
@@ -554,6 +809,15 @@ export default function PropositionsApp() {
   }, [viewState])
 
   useEffect(() => {
+    if (isLoadingData) return
+    setCurrentEra((prev) => ({
+      ...prev,
+      themes: cloneThemes(themes),
+      updatedAt: Date.now(),
+    }))
+  }, [themes, isLoadingData])
+
+  useEffect(() => {
     loadPersistedData()
   }, [])
 
@@ -561,33 +825,54 @@ export default function PropositionsApp() {
     try {
       console.log("[v0] Starting to load persisted data...")
 
-      // Try to get saved file system handle first
+      let storedState: StoredAppState | null = null
+
       if (isFileSystemSupported()) {
         const handle = await getSavedDirectoryHandle()
         if (handle) {
           console.log("[v0] Found saved file system handle, loading from file system...")
           setFileSystemHandle(handle)
           setUseFileSystem(true)
-          await loadFromFileSystem(handle)
-          setIsLoadingData(false)
-          console.log("[v0] Successfully loaded from file system")
-          return
+          const fileSystemState = await loadFromFileSystem(handle)
+
+          if (fileSystemState) {
+            applyStoredAppState(fileSystemState)
+            setIsLoadingData(false)
+            console.log("[v0] Successfully loaded from file system")
+            return
+          }
         }
       }
 
-      console.log("[v0] Loading from IndexedDB...")
-      // Fallback to IndexedDB
+      if (!storedState) {
+        storedState = await loadAppState()
+      }
+
+      if (storedState) {
+        console.log("[v0] Loaded app state from IndexedDB")
+        applyStoredAppState(storedState)
+        setIsLoadingData(false)
+        return
+      }
+
+      console.log("[v0] Loading legacy data from IndexedDB...")
       const loadedThemes = await loadThemes()
 
-      console.log("[v0] Loaded themes from IndexedDB:", loadedThemes)
-
       if (loadedThemes.length === 0) {
-        console.log("[v0] No themes found in IndexedDB")
+        console.log("[v0] No legacy themes found in IndexedDB")
+        const freshEra = {
+          ...createBlankEra("Ciclo inicial"),
+          themes: cloneThemes(DEFAULT_INITIAL_THEMES),
+        }
+        setCurrentEra(freshEra)
+        setThemes(cloneThemes(freshEra.themes))
+        setEraHistory([])
         setIsLoadingData(false)
         return
       }
 
       const firstTheme = loadedThemes[0] as any
+      let migratedThemes: Theme[] = []
 
       if (firstTheme && !("name" in firstTheme)) {
         console.log("[v0] Legacy subtopics structure detected, converting to themes")
@@ -625,61 +910,73 @@ export default function PropositionsApp() {
           }),
         )
 
-        setThemes([
+        migratedThemes = [
           {
             id: "legacy-theme",
             name: "Tema legado",
             subtopics: legacySubtopicsWithAudios,
           },
-        ])
-        return
-      }
+        ]
+      } else {
+        migratedThemes = await Promise.all(
+          loadedThemes.map(async (theme: any, themeIndex: number) => {
+            const subtopicsWithAudios: Subtopic[] = await Promise.all(
+              (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
+                if (!subtopic.propositions) {
+                  return {
+                    id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
+                    text: subtopic.text ?? "",
+                    propositions: null,
+                  }
+                }
 
-      // Load themes with their propositions and audios
-      const themesWithAudios: Theme[] = await Promise.all(
-        loadedThemes.map(async (theme: any, themeIndex: number) => {
-          const subtopicsWithAudios: Subtopic[] = await Promise.all(
-            (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
-              if (!subtopic.propositions) {
+                const audiosGrouped = await loadAudios(subtopic.id)
+                const propositionsWithAudios: Proposition[] = subtopic.propositions.map(
+                  (prop: any, propIndex: number) => {
+                    const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
+                    return {
+                      id: prop.id ?? `${subtopic.id}-${propIndex}`,
+                      type,
+                      label: prop.label ?? getLabelForProposition(type, propIndex),
+                      text: prop.text ?? "",
+                      audios: audiosGrouped[propIndex] || [],
+                    }
+                  },
+                )
+
                 return {
                   id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
                   text: subtopic.text ?? "",
-                  propositions: null,
+                  propositions: propositionsWithAudios,
                 }
-              }
+              }),
+            )
 
-              const audiosGrouped = await loadAudios(subtopic.id)
-              const propositionsWithAudios: Proposition[] = subtopic.propositions.map(
-                (prop: any, propIndex: number) => {
-                  const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
-                  return {
-                    id: prop.id ?? `${subtopic.id}-${propIndex}`,
-                    type,
-                    label: prop.label ?? getLabelForProposition(type, propIndex),
-                    text: prop.text ?? "",
-                    audios: audiosGrouped[propIndex] || [],
-                  }
-                },
-              )
+            return {
+              id: theme.id ?? `theme-${themeIndex}`,
+              name: theme.name ?? `Tema ${themeIndex + 1}`,
+              subtopics: subtopicsWithAudios,
+            }
+          }),
+        )
+      }
 
-              return {
-                id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
-                text: subtopic.text ?? "",
-                propositions: propositionsWithAudios,
-              }
-            }),
-          )
+      const migratedEra: Era = {
+        id: createEraId(),
+        name: "Ciclo migrado",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        closedAt: null,
+        themes: migratedThemes,
+      }
 
-          return {
-            id: theme.id ?? `theme-${themeIndex}`,
-            name: theme.name ?? `Tema ${themeIndex + 1}`,
-            subtopics: subtopicsWithAudios,
-          }
-        }),
-      )
-
-      console.log("[v0] Final themes with audios:", themesWithAudios)
-      setThemes(themesWithAudios)
+      setCurrentEra(migratedEra)
+      setThemes(cloneThemes(migratedEra.themes))
+      setEraHistory([])
+      await saveAppState({
+        currentEra: cloneEra(migratedEra) as StoredEra,
+        eraHistory: [],
+      })
     } catch (error) {
       console.error("[v0] Error loading persisted data:", error)
     } finally {
@@ -688,28 +985,137 @@ export default function PropositionsApp() {
     }
   }
 
-  const loadFromFileSystem = async (handle: FileSystemDirectoryHandle) => {
+  const loadFromFileSystem = async (
+    handle: FileSystemDirectoryHandle,
+  ): Promise<StoredAppState | null> => {
     try {
-      console.log("[v0] Reading themes.json from file system...")
-      let data = await readJSONFile(handle, "themes.json")
+      console.log("[v0] Reading app-state.json from file system...")
+      const stateData = await readJSONFile(handle, "app-state.json")
 
-      if (!data) {
+      const readAudioBlob = async (
+        eraId: string,
+        subtopicId: string,
+        propIndex: number,
+        audioIndex: number,
+      ) => {
+        const modernFilename = `audio-${eraId}-${subtopicId}-${propIndex}-${audioIndex}.webm`
+        let blob = await readBlobFile(handle, modernFilename)
+        if (!blob) {
+          const legacyFilename = `audio-${subtopicId}-${propIndex}-${audioIndex}.webm`
+          blob = await readBlobFile(handle, legacyFilename)
+        }
+        return blob
+      }
+
+      const hydrateEra = async (rawEra: any, fallbackName: string, index: number): Promise<StoredEra> => {
+        const eraId = rawEra?.id ?? createEraId()
+        const createdAt = rawEra?.createdAt ?? Date.now()
+        const updatedAt = rawEra?.updatedAt ?? createdAt
+        const themes = await Promise.all(
+          ((rawEra?.themes as any[]) ?? []).map(async (theme, themeIndex) => {
+            const themeId = theme?.id ?? `${eraId}-theme-${themeIndex}`
+            const subtopics = await Promise.all(
+              ((theme?.subtopics as any[]) ?? []).map(async (subtopic, subIndex) => {
+                const subtopicId = subtopic?.id ?? `${themeId}-subtopic-${subIndex}`
+                const propositionsRaw = subtopic?.propositions as any[] | null
+
+                if (!propositionsRaw) {
+                  return {
+                    id: subtopicId,
+                    text: subtopic?.text ?? "",
+                    propositions: null,
+                  }
+                }
+
+                const propositions = await Promise.all(
+                  propositionsRaw.map(async (prop, propIndex) => {
+                    const audioCount = typeof prop?.audioCount === "number" ? prop.audioCount : undefined
+                    const audios: Blob[] = []
+
+                    if (typeof audioCount === "number") {
+                      for (let audioIndex = 0; audioIndex < audioCount; audioIndex++) {
+                        const blob = await readAudioBlob(eraId, subtopicId, propIndex, audioIndex)
+                        if (blob) {
+                          audios.push(blob)
+                        }
+                      }
+                    } else {
+                      let audioIndex = 0
+                      while (true) {
+                        const blob = await readAudioBlob(eraId, subtopicId, propIndex, audioIndex)
+                        if (!blob) break
+                        audios.push(blob)
+                        audioIndex++
+                      }
+                    }
+
+                    const type = (prop?.type ?? "custom") as PropositionKind
+
+                    return {
+                      id: prop?.id ?? `${subtopicId}-${propIndex}`,
+                      type,
+                      label: prop?.label ?? getLabelForProposition(type, propIndex),
+                      text: prop?.text ?? "",
+                      audios,
+                    }
+                  }),
+                )
+
+                return {
+                  id: subtopicId,
+                  text: subtopic?.text ?? "",
+                  propositions,
+                }
+              }),
+            )
+
+            return {
+              id: themeId,
+              name: theme?.name ?? `Tema ${themeIndex + 1}`,
+              subtopics,
+            }
+          }),
+        )
+
+        return {
+          id: eraId,
+          name: rawEra?.name ?? `${fallbackName} ${index + 1}`,
+          createdAt,
+          updatedAt,
+          closedAt: rawEra?.closedAt ?? null,
+          themes,
+        }
+      }
+
+      if (stateData && typeof stateData === "object") {
+        const currentEra = await hydrateEra(stateData.currentEra, "Ciclo", 0)
+        const historyRaw: any[] = Array.isArray(stateData.eraHistory) ? stateData.eraHistory : []
+        const history = await Promise.all(historyRaw.map((era, index) => hydrateEra(era, "Ciclo", index + 1)))
+
+        return {
+          currentEra,
+          eraHistory: history,
+        }
+      }
+
+      console.log("[v0] app-state.json not found, falling back to themes.json")
+
+      let legacyData = await readJSONFile(handle, "themes.json")
+      if (!legacyData) {
         console.log("[v0] themes.json not found, trying legacy subtopics.json")
-        data = await readJSONFile(handle, "subtopics.json")
+        legacyData = await readJSONFile(handle, "subtopics.json")
       }
 
-      if (!data || !Array.isArray(data)) {
+      if (!legacyData || !Array.isArray(legacyData)) {
         console.log("[v0] No valid data found in file system")
-        return
+        return null
       }
 
-      console.log("[v0] Found data in file system:", data)
-
-      const firstTheme = data[0] as any
+      const firstTheme = legacyData[0] as any
 
       if (firstTheme && !("name" in firstTheme)) {
         const legacySubtopicsWithAudios: Subtopic[] = await Promise.all(
-          data.map(async (subtopic: any, subtopicIndex: number) => {
+          legacyData.map(async (subtopic: any, subtopicIndex: number) => {
             if (!subtopic.propositions) {
               return {
                 id: subtopic.id ?? `legacy-${subtopicIndex}`,
@@ -751,18 +1157,27 @@ export default function PropositionsApp() {
           }),
         )
 
-        setThemes([
-          {
-            id: "legacy-theme",
-            name: "Tema legado",
-            subtopics: legacySubtopicsWithAudios,
+        return {
+          currentEra: {
+            id: createEraId(),
+            name: "Ciclo desde archivos",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            closedAt: null,
+            themes: [
+              {
+                id: "legacy-theme",
+                name: "Tema legado",
+                subtopics: legacySubtopicsWithAudios,
+              },
+            ],
           },
-        ])
-        return
+          eraHistory: [],
+        }
       }
 
       const themesWithAudios: Theme[] = await Promise.all(
-        data.map(async (theme: any, themeIndex: number) => {
+        legacyData.map(async (theme: any, themeIndex: number) => {
           const subtopicsWithAudios: Subtopic[] = await Promise.all(
             (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
               if (!subtopic.propositions) {
@@ -814,10 +1229,20 @@ export default function PropositionsApp() {
         }),
       )
 
-      console.log("[v0] Loaded themes from file system:", themesWithAudios)
-      setThemes(themesWithAudios)
+      return {
+        currentEra: {
+          id: createEraId(),
+          name: "Ciclo desde archivos",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          closedAt: null,
+          themes: themesWithAudios,
+        },
+        eraHistory: [],
+      }
     } catch (error) {
       console.error("[v0] Error loading from file system:", error)
+      return null
     }
   }
 
@@ -825,15 +1250,61 @@ export default function PropositionsApp() {
     if (!isLoadingData) {
       saveData()
     }
-  }, [themes, isLoadingData])
+  }, [themes, eraHistory, currentEra, useFileSystem, fileSystemHandle, isLoadingData])
 
   const saveData = async () => {
     try {
+      const appState = buildStoredAppState()
+      await saveAppState(appState)
+
       if (useFileSystem && fileSystemHandle) {
-        await saveToFileSystem(fileSystemHandle)
-      } else {
-        // Fallback to IndexedDB
-        const themesToSave = themes.map((theme) => ({
+        await saveToFileSystem(fileSystemHandle, appState)
+      }
+    } catch (error) {
+      console.error("[v0] Error saving data:", error)
+    }
+  }
+
+  const saveToFileSystem = async (
+    handle: FileSystemDirectoryHandle,
+    appState: StoredAppState,
+  ) => {
+    try {
+      const prepareEraForJson = (era: StoredEra) => ({
+        id: era.id,
+        name: era.name,
+        createdAt: era.createdAt,
+        updatedAt: era.updatedAt,
+        closedAt: era.closedAt,
+        themes: era.themes.map((theme) => ({
+          id: theme.id,
+          name: theme.name,
+          subtopics: theme.subtopics.map((subtopic) => ({
+            id: subtopic.id,
+            text: subtopic.text,
+            propositions: subtopic.propositions
+              ? subtopic.propositions.map((prop) => ({
+                  id: prop.id,
+                  type: prop.type,
+                  label: prop.label,
+                  text: prop.text,
+                  audioCount: prop.audios.length,
+                }))
+              : null,
+          })),
+        })),
+      })
+
+      const jsonPayload = {
+        currentEra: prepareEraForJson(appState.currentEra),
+        eraHistory: appState.eraHistory.map(prepareEraForJson),
+      }
+
+      await writeJSONFile(handle, "app-state.json", jsonPayload)
+      await writeJSONFile(
+        handle,
+        "themes.json",
+        appState.currentEra.themes.map((theme) => ({
           id: theme.id,
           name: theme.name,
           subtopics: theme.subtopics.map((subtopic) => ({
@@ -848,59 +1319,19 @@ export default function PropositionsApp() {
                 }))
               : null,
           })),
-        }))
-
-        await saveThemes(themesToSave)
-
-        // Save audio blobs separately
-        for (const theme of themes) {
-          for (const subtopic of theme.subtopics) {
-            if (subtopic.propositions) {
-              for (let propIndex = 0; propIndex < subtopic.propositions.length; propIndex++) {
-                const prop = subtopic.propositions[propIndex]
-                for (let audioIndex = 0; audioIndex < prop.audios.length; audioIndex++) {
-                  await saveAudio(subtopic.id, propIndex, audioIndex, prop.audios[audioIndex])
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error("[v0] Error saving data:", error)
-    }
-  }
-
-  const saveToFileSystem = async (handle: FileSystemDirectoryHandle) => {
-    try {
-      // Save themes structure
-      const themesData = themes.map((theme) => ({
-        id: theme.id,
-        name: theme.name,
-        subtopics: theme.subtopics.map((subtopic) => ({
-          id: subtopic.id,
-          text: subtopic.text,
-          propositions: subtopic.propositions
-            ? subtopic.propositions.map((prop) => ({
-                id: prop.id,
-                type: prop.type,
-                label: prop.label,
-                text: prop.text,
-              }))
-            : null,
         })),
-      }))
+      )
 
-      await writeJSONFile(handle, "themes.json", themesData)
+      const erasToPersist = [appState.currentEra, ...appState.eraHistory]
 
-      // Save audio files
-      for (const theme of themes) {
-        for (const subtopic of theme.subtopics) {
-          if (subtopic.propositions) {
+      for (const era of erasToPersist) {
+        for (const theme of era.themes) {
+          for (const subtopic of theme.subtopics) {
+            if (!subtopic.propositions) continue
             for (let propIndex = 0; propIndex < subtopic.propositions.length; propIndex++) {
               const prop = subtopic.propositions[propIndex]
               for (let audioIndex = 0; audioIndex < prop.audios.length; audioIndex++) {
-                const filename = `audio-${subtopic.id}-${propIndex}-${audioIndex}.webm`
+                const filename = `audio-${era.id}-${subtopic.id}-${propIndex}-${audioIndex}.webm`
                 await writeBlobFile(handle, filename, prop.audios[audioIndex])
               }
             }
@@ -919,7 +1350,7 @@ export default function PropositionsApp() {
         setFileSystemHandle(handle)
         setUseFileSystem(true)
         // Save current data to file system
-        await saveToFileSystem(handle)
+        await saveToFileSystem(handle, buildStoredAppState())
       }
     } catch (error: any) {
       if (error?.message?.includes("Cross origin") || error?.message?.includes("cross-origin")) {
@@ -1495,7 +1926,15 @@ export default function PropositionsApp() {
               <Button variant="ghost" size="icon" onClick={addTheme} title="Agregar tema">
                 <Plus className="w-5 h-5" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowErasModal(true)}
+                title="Historial de ciclos (h)"
+              >
+                <History className="w-5 h-5" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes">
                 <Settings className="w-5 h-5" />
               </Button>
             </div>
@@ -1548,7 +1987,7 @@ export default function PropositionsApp() {
           </p>
         </div>
 
-        <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+        {sharedModals}
       </div>
     )
   }
@@ -1645,7 +2084,7 @@ export default function PropositionsApp() {
           </p>
         </div>
 
-        <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+        {sharedModals}
       </div>
     )
   }

@@ -3,6 +3,40 @@ import { openDB, type DBSchema, type IDBPDatabase } from "idb"
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 type PropositionKind = PropositionType | "custom"
 
+type StoredProposition = {
+  id: string
+  type: PropositionKind
+  label: string
+  text: string
+  audios: Blob[]
+}
+
+type StoredSubtopic = {
+  id: string
+  text: string
+  propositions: StoredProposition[] | null
+}
+
+type StoredTheme = {
+  id: string
+  name: string
+  subtopics: StoredSubtopic[]
+}
+
+export type StoredEra = {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  closedAt: number | null
+  themes: StoredTheme[]
+}
+
+export type StoredAppState = {
+  currentEra: StoredEra
+  eraHistory: StoredEra[]
+}
+
 interface PropositionsDB extends DBSchema {
   subtopics: {
     key: string
@@ -42,28 +76,36 @@ interface PropositionsDB extends DBSchema {
       groqPrompt: string
     }
   }
+  appState: {
+    key: string
+    value: StoredAppState
+  }
 }
 
 let dbPromise: Promise<IDBPDatabase<PropositionsDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<PropositionsDB>("propositions-app", 1, {
-      upgrade(db) {
+    dbPromise = openDB<PropositionsDB>("propositions-app", 2, {
+      upgrade(db, oldVersion) {
         // Create subtopics store
-        if (!db.objectStoreNames.contains("subtopics")) {
+        if (oldVersion < 1 && !db.objectStoreNames.contains("subtopics")) {
           db.createObjectStore("subtopics", { keyPath: "id" })
         }
 
         // Create audios store with index
-        if (!db.objectStoreNames.contains("audios")) {
+        if (oldVersion < 1 && !db.objectStoreNames.contains("audios")) {
           const audioStore = db.createObjectStore("audios", { keyPath: "id" })
           audioStore.createIndex("by-subtopic", "subtopicId")
         }
 
         // Create settings store
-        if (!db.objectStoreNames.contains("settings")) {
+        if (oldVersion < 1 && !db.objectStoreNames.contains("settings")) {
           db.createObjectStore("settings")
+        }
+
+        if (oldVersion < 2 && !db.objectStoreNames.contains("appState")) {
+          db.createObjectStore("appState")
         }
       },
     })
@@ -139,12 +181,24 @@ export async function loadSettings() {
   return await db.get("settings", "config")
 }
 
+// App state operations
+export async function saveAppState(state: StoredAppState) {
+  const db = await getDB()
+  await db.put("appState", state, "main")
+}
+
+export async function loadAppState() {
+  const db = await getDB()
+  return await db.get("appState", "main")
+}
+
 // Clear all data
 export async function clearAllData() {
   const db = await getDB()
-  const tx = db.transaction(["subtopics", "audios", "settings"], "readwrite")
+  const tx = db.transaction(["subtopics", "audios", "settings", "appState"], "readwrite")
   await tx.objectStore("subtopics").clear()
   await tx.objectStore("audios").clear()
   await tx.objectStore("settings").clear()
+  await tx.objectStore("appState").clear()
   await tx.done
 }
