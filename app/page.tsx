@@ -171,7 +171,6 @@ const parseClipboardJson = (text: string): any[] | null => {
 
   return null
 }
-
 export default function PropositionsApp() {
   const [themes, setThemes] = useState<Theme[]>([
     {
@@ -189,6 +188,15 @@ export default function PropositionsApp() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
+
+  // 👇 de codex/modify-subtopic-display-behavior
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [isRecording, setIsRecording] = useState(false)
+  const [countdown, setCountdown] = useState(5)
+  const [showRelaxAnimation, setShowRelaxAnimation] = useState(false)
+  const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
+
+  // 👇 de main
   const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
   const [rewritePreview, setRewritePreview] = useState<{ propositionId: string; text: string } | null>(null)
 
@@ -399,6 +407,16 @@ export default function PropositionsApp() {
         return
       }
 
+      if (e.key === " " && viewState === "overview") {
+        e.preventDefault()
+        if (propositions.length > 0) {
+          setCurrentIndex(0)
+          setViewState("recording")
+          setCountdown(5)
+        }
+        return
+      }
+
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault()
         if ((viewState === "recording" || viewState === "prompt") && !mediaRecorderRef.current) {
@@ -411,7 +429,7 @@ export default function PropositionsApp() {
 
     window.addEventListener("keydown", handleKeyPress)
     return () => window.removeEventListener("keydown", handleKeyPress)
-  }, [viewState, mediaRecorderRef.current])
+  }, [viewState, propositions.length, mediaRecorderRef.current])
 
   useEffect(() => {
     loadPersistedData()
@@ -1066,12 +1084,6 @@ export default function PropositionsApp() {
     }
   }
 
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const [isRecording, setIsRecording] = useState(false)
-  const [countdown, setCountdown] = useState(5)
-  const [showRelaxAnimation, setShowRelaxAnimation] = useState(false)
-  const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
-
   useEffect(() => {
     if (viewState === "countdown" && countdown > 0) {
       const timer = setTimeout(() => setCountdown(countdown - 1), 1000)
@@ -1531,23 +1543,7 @@ export default function PropositionsApp() {
           </Button>
         </div>
 
-        <div className="max-w-4xl mx-auto space-y-8">
-          <div className="text-center space-y-2">
-            <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-              {currentTheme.name}
-            </p>
-            <h1 className="text-3xl font-bold text-balance">Proposiciones del subtema</h1>
-          </div>
-
-          <Card className="p-6">
-            <div className="space-y-2 text-center">
-              <p className="text-sm text-muted-foreground uppercase tracking-wide">Subtema seleccionado</p>
-              <div className="text-xl leading-relaxed text-foreground break-words">
-                <MathText text={currentSubtopic.text} />
-              </div>
-            </div>
-          </Card>
-
+        <div className="max-w-4xl mx-auto space-y-6">
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
@@ -1659,11 +1655,9 @@ export default function PropositionsApp() {
                   </div>
                 ))}
               </Card>
-              <div className="flex justify-center">
-                <Button size="lg" onClick={() => goToProposition(0)}>
-                  Iniciar práctica guiada
-                </Button>
-              </div>
+              <p className="text-center text-sm text-muted-foreground">
+                Presiona la barra espaciadora para iniciar la práctica.
+              </p>
             </>
           )}
         </div>
