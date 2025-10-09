@@ -14,6 +14,7 @@ import {
   Loader2,
   RotateCcw,
   History,
+  ClipboardList,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -36,6 +37,7 @@ import {
   writeBlobFile,
   readBlobFile,
 } from "@/lib/file-system"
+import { DEFAULT_PROMPT, DEFAULT_REASONER_MODEL, DEFAULT_UNIVERSAL_MODEL } from "@/lib/groq"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 
@@ -231,6 +233,9 @@ export default function PropositionsApp() {
   const [currentSubtopicId, setCurrentSubtopicId] = useState<string | null>(null)
   const [viewState, setViewState] = useState<ViewState>("themes")
   const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [groqUniversalModel, setGroqUniversalModel] = useState(DEFAULT_UNIVERSAL_MODEL)
+  const [groqReasonerModel, setGroqReasonerModel] = useState(DEFAULT_REASONER_MODEL)
+  const [groqSystemPrompt, setGroqSystemPrompt] = useState(DEFAULT_PROMPT)
   const [showErasModal, setShowErasModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [importInitialText, setImportInitialText] = useState("")
@@ -238,6 +243,44 @@ export default function PropositionsApp() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
+
+  const loadGroqSettings = useCallback(() => {
+    if (typeof window === "undefined") {
+      setGroqUniversalModel(DEFAULT_UNIVERSAL_MODEL)
+      setGroqReasonerModel(DEFAULT_REASONER_MODEL)
+      setGroqSystemPrompt(DEFAULT_PROMPT)
+      return
+    }
+
+    try {
+      const storedUniversal =
+        window.localStorage.getItem("groq_universal_model") ||
+        window.localStorage.getItem("groq_model") ||
+        DEFAULT_UNIVERSAL_MODEL
+      const storedReasoner =
+        window.localStorage.getItem("groq_reasoner_model") || storedUniversal || DEFAULT_REASONER_MODEL
+      const storedPrompt = window.localStorage.getItem("groq_prompt") || DEFAULT_PROMPT
+
+      setGroqUniversalModel(storedUniversal)
+      setGroqReasonerModel(storedReasoner)
+      setGroqSystemPrompt(storedPrompt)
+    } catch (error) {
+      console.warn("[v0] No se pudieron cargar los ajustes de Groq:", error)
+      setGroqUniversalModel(DEFAULT_UNIVERSAL_MODEL)
+      setGroqReasonerModel(DEFAULT_REASONER_MODEL)
+      setGroqSystemPrompt(DEFAULT_PROMPT)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadGroqSettings()
+  }, [loadGroqSettings])
+
+  useEffect(() => {
+    if (!showSettingsModal) {
+      loadGroqSettings()
+    }
+  }, [showSettingsModal, loadGroqSettings])
 
   // 👇 de codex/modify-subtopic-display-behavior
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -1502,6 +1545,39 @@ export default function PropositionsApp() {
     }))
   }
 
+  const handleAddCustomProposition = () => {
+    if (!currentThemeId || !currentSubtopicId) {
+      return
+    }
+
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const newText = window.prompt("Escribe la nueva proposición personalizada:")
+
+    if (!newText || !newText.trim()) {
+      return
+    }
+
+    updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+      const existing = subtopic.propositions ?? []
+      const newIndex = existing.length
+      const newProposition: Proposition = {
+        id: `${subtopic.id}-custom-${Date.now()}`,
+        type: "custom",
+        label: getLabelForProposition("custom", newIndex),
+        text: newText.trim(),
+        audios: [],
+      }
+
+      return {
+        ...subtopic,
+        propositions: [...existing, newProposition],
+      }
+    })
+  }
+
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
@@ -1549,7 +1625,7 @@ export default function PropositionsApp() {
     console.log("[v0] No propositions found, generating with Groq...")
     setIsGenerating(true)
     try {
-      const result = await generatePropositions(subtopic.text)
+      const result = await generatePropositions(subtopic.text, groqUniversalModel, groqSystemPrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -1766,7 +1842,7 @@ export default function PropositionsApp() {
 
     setGeneratingPropositionId(propositionId)
     try {
-      const result = await generatePropositions(proposition.text)
+      const result = await generatePropositions(proposition.text, groqReasonerModel, groqSystemPrompt)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -1857,7 +1933,7 @@ export default function PropositionsApp() {
     setRewritingPropositionId(target.id)
 
     try {
-      const result = await rewriteProposition(userPrompt)
+      const result = await rewriteProposition(userPrompt, groqReasonerModel)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -2050,10 +2126,18 @@ export default function PropositionsApp() {
               <Button
                 variant="ghost"
                 size="icon"
+                onClick={addSubtopic}
+                title="Agregar fila manual"
+              >
+                <Plus className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={importSubtopicFromClipboard}
                 title="Importar subtema desde portapapeles"
               >
-                <Plus className="w-5 h-5" />
+                <ClipboardList className="w-5 h-5" />
               </Button>
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
                 <Settings className="w-5 h-5" />
@@ -2068,8 +2152,17 @@ export default function PropositionsApp() {
           ) : subtopics.length === 0 ? (
             <Card className="p-12 text-center space-y-4">
               <p className="text-muted-foreground">
-                Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles.
+                Este tema aún no tiene subtemas. Usa el botón [+] para agregar una fila manual o el icono de
+                portapapeles para importar desde el portapapeles.
               </p>
+              <div className="flex justify-center gap-3">
+                <Button onClick={addSubtopic}>
+                  <Plus className="w-4 h-4 mr-2" /> Agregar fila
+                </Button>
+                <Button variant="outline" onClick={importSubtopicFromClipboard}>
+                  <ClipboardList className="w-4 h-4 mr-2" /> Importar subtema
+                </Button>
+              </div>
             </Card>
           ) : (
             <Card className="p-6 space-y-4">
@@ -2094,14 +2187,14 @@ export default function PropositionsApp() {
                       className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <Button
-                    onClick={() =>
-                      subtopic.propositions
-                        ? openSubtopicDetail(subtopic.id)
-                        : evaluatePropositions(subtopic.id)
-                    }
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
+                      onClick={() =>
+                        subtopic.propositions
+                          ? openSubtopicDetail(subtopic.id)
+                          : evaluatePropositions(subtopic.id)
+                      }
+                      disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
+                      className="whitespace-nowrap"
+                    >
                     {isGenerating
                       ? "Generando..."
                       : subtopic.propositions
@@ -2111,6 +2204,14 @@ export default function PropositionsApp() {
                   </div>
                 )
               })}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addSubtopic}
+                className="w-full border-dashed"
+              >
+                <Plus className="w-4 h-4 mr-2" /> Agregar nueva fila de subtema
+              </Button>
             </Card>
           )}
           <p className="text-xs text-muted-foreground text-center">
@@ -2167,6 +2268,35 @@ export default function PropositionsApp() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Subtema seleccionado
+              </p>
+              <div className="text-2xl font-bold leading-snug text-foreground break-words">
+                <MathText text={currentSubtopic.text || "Subtema sin descripción"} />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleAddCustomProposition}
+                title="Agregar proposición personalizada"
+              >
+                <Plus className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSettingsModal(true)}
+                title="Ajustes"
+              >
+                <Settings className="w-5 h-5" />
+              </Button>
+            </div>
+          </div>
+
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">

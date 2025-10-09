@@ -7,48 +7,57 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getAvailableModels } from "@/app/actions"
+import {
+  DEFAULT_PROMPT,
+  DEFAULT_REASONER_MODEL,
+  DEFAULT_UNIVERSAL_MODEL,
+  GROQ_MODEL_GROUPS,
+  type GroqModelGroups,
+} from "@/lib/groq"
 
 interface SettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Según esta condición crea su recíproco, inverso, contra-recíproco.
-
-Salida obligatoria en formato JSON:
-{
-  "reciproco": "texto del recíproco",
-  "inverso": "texto del inverso",
-  "contrareciproco": "texto del contra-recíproco"
-}`
-
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
-  const [model, setModel] = useState(DEFAULT_MODEL)
+  const [universalModel, setUniversalModel] = useState(DEFAULT_UNIVERSAL_MODEL)
+  const [reasonerModel, setReasonerModel] = useState(DEFAULT_REASONER_MODEL)
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
-  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [availableModels, setAvailableModels] = useState<GroqModelGroups>(GROQ_MODEL_GROUPS)
 
   useEffect(() => {
     if (open) {
-      const savedModel = localStorage.getItem("groq_model") || DEFAULT_MODEL
+      const savedUniversalModel =
+        localStorage.getItem("groq_universal_model") ||
+        localStorage.getItem("groq_model") ||
+        DEFAULT_UNIVERSAL_MODEL
+      const savedReasonerModel =
+        localStorage.getItem("groq_reasoner_model") || savedUniversalModel || DEFAULT_REASONER_MODEL
       const savedPrompt = localStorage.getItem("groq_prompt") || DEFAULT_PROMPT
-      setModel(savedModel)
+      setUniversalModel(savedUniversalModel)
+      setReasonerModel(savedReasonerModel)
       setPrompt(savedPrompt)
 
-      getAvailableModels().then(setAvailableModels)
+      getAvailableModels().then((models) => setAvailableModels(models))
     }
   }, [open])
 
   const handleSave = () => {
-    localStorage.setItem("groq_model", model)
+    localStorage.setItem("groq_model", universalModel)
+    localStorage.setItem("groq_universal_model", universalModel)
+    localStorage.setItem("groq_reasoner_model", reasonerModel)
     localStorage.setItem("groq_prompt", prompt)
     onOpenChange(false)
   }
 
   const handleReset = () => {
-    setModel(DEFAULT_MODEL)
+    setUniversalModel(DEFAULT_UNIVERSAL_MODEL)
+    setReasonerModel(DEFAULT_REASONER_MODEL)
     setPrompt(DEFAULT_PROMPT)
     localStorage.removeItem("groq_model")
+    localStorage.removeItem("groq_universal_model")
+    localStorage.removeItem("groq_reasoner_model")
     localStorage.removeItem("groq_prompt")
   }
 
@@ -60,21 +69,54 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         </DialogHeader>
 
         <div className="space-y-6 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="model">Modelo de Groq</Label>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona un modelo" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableModels.map((modelOption) => (
-                  <SelectItem key={modelOption} value={modelOption}>
-                    {modelOption}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">Selecciona el modelo de Groq a utilizar</p>
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="universal-model">Modelo universal</Label>
+              <Select value={universalModel} onValueChange={setUniversalModel}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona un modelo universal" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.universal.map((modelOption) => (
+                    <SelectItem key={modelOption.id} value={modelOption.id}>
+                      <div className="flex flex-col">
+                        <span>{modelOption.label}</span>
+                        {modelOption.description && (
+                          <span className="text-xs text-muted-foreground">{modelOption.description}</span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                Selecciona el modelo universal principal que se utilizará para generar las proposiciones.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reasoner-model">Modelo razonador</Label>
+              <Select value={reasonerModel} onValueChange={setReasonerModel}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona un modelo razonador" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.reasoner.map((modelOption) => (
+                    <SelectItem key={modelOption.id} value={modelOption.id}>
+                      <div className="flex flex-col">
+                        <span>{modelOption.label}</span>
+                        {modelOption.description && (
+                          <span className="text-xs text-muted-foreground">{modelOption.description}</span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                Este modelo se utilizará para tareas de reescritura o razonamiento cuando sea necesario.
+              </p>
+            </div>
           </div>
 
           <div className="space-y-2">

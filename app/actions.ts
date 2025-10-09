@@ -1,25 +1,13 @@
 "use server"
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes o después.
-
-Dada una condición lógica, genera su recíproco, inverso y contra-recíproco.
-
-Formato de salida (SOLO JSON, sin explicaciones):
-{
-  "reciproco": "texto del recíproco",
-  "inverso": "texto del inverso",
-  "contrareciproco": "texto del contra-recíproco"
-}`
-
-const DEFAULT_REWRITE_PROMPT = `Eres un asistente que reescribe proposiciones lógicas. Recibirás una instrucción en español que siempre incluye una condición base y el tipo de proposición deseado.
-
-Responde ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después, usando el formato:
-{
-  "proposicion": "texto de la proposición reescrita"
-}
-
-El texto de la proposición debe ser claro, gramaticalmente correcto y mantener coherencia lógica con la instrucción recibida.`
+import {
+  DEFAULT_PROMPT,
+  DEFAULT_REASONER_MODEL,
+  DEFAULT_REWRITE_PROMPT,
+  DEFAULT_UNIVERSAL_MODEL,
+  GROQ_MODEL_GROUPS,
+  type GroqModelGroups,
+} from "@/lib/groq"
 
 export async function generatePropositions(
   condition: string,
@@ -47,7 +35,7 @@ export async function generatePropositions(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
+        model: model || DEFAULT_UNIVERSAL_MODEL,
         messages: [
           {
             role: "system",
@@ -130,7 +118,7 @@ export async function rewriteProposition(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
+        model: model || DEFAULT_REASONER_MODEL,
         messages: [
           {
             role: "system",
@@ -183,12 +171,6 @@ export async function rewriteProposition(
   }
 }
 
-export async function getAvailableModels(): Promise<string[]> {
-  return [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
-  ]
+export async function getAvailableModels(): Promise<GroqModelGroups> {
+  return GROQ_MODEL_GROUPS
 }
