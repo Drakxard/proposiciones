@@ -18,7 +18,8 @@ import {
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
 import { SubtopicImportModal, type SubtopicImportPayload } from "@/components/subtopic-import-modal"
-import { generatePropositions, rewriteProposition } from "./actions"
+import { generateProposition, rewriteProposition } from "./actions"
+import { DEFAULT_MODEL, DEFAULT_PROMPT, type PropositionVariant } from "@/lib/groq"
 import {
   loadThemes,
   loadAudios,
@@ -157,6 +158,22 @@ const propositionTypeLabels: Record<PropositionType, string> = {
   contrareciproco: "Contra-Recíproco",
 }
 
+const propositionVariants: PropositionVariant[] = ["reciproco", "inverso", "contrareciproco"]
+
+const getGroqSettings = () => {
+  if (typeof window === "undefined") {
+    return { model: DEFAULT_MODEL, prompt: DEFAULT_PROMPT }
+  }
+
+  const storedModel = window.localStorage.getItem("groq_model")
+  const storedPrompt = window.localStorage.getItem("groq_prompt")
+
+  return {
+    model: storedModel || DEFAULT_MODEL,
+    prompt: storedPrompt || DEFAULT_PROMPT,
+  }
+}
+
 const mapIndexToType = (index: number): PropositionKind => {
   switch (index) {
     case 0:
@@ -235,7 +252,6 @@ export default function PropositionsApp() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [importInitialText, setImportInitialText] = useState("")
   const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
-  const [isGenerating, setIsGenerating] = useState(false)
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
 
@@ -402,6 +418,90 @@ export default function PropositionsApp() {
         subtopic.id === subtopicId ? updater(subtopic) : subtopic,
       ),
     }))
+  }
+
+  const ensureStandardPropositions = (
+    themeId: string,
+    subtopicId: string,
+    snapshot?: Subtopic | null,
+  ) => {
+    const theme = themes.find((t) => t.id === themeId)
+    const target = snapshot ?? theme?.subtopics.find((s) => s.id === subtopicId)
+
+    if (!target) {
+      return
+    }
+
+    updateSubtopicById(themeId, subtopicId, (current) => {
+      const existing = current.propositions ?? []
+      const byType = new Map<PropositionType, Proposition>()
+
+      for (const prop of existing) {
+        if (prop.type === "custom") {
+          continue
+        }
+
+        const typed = prop.type as PropositionType
+        if (!byType.has(typed)) {
+          byType.set(typed, prop)
+        }
+      }
+
+      let needsUpdate = false
+
+      const conditionProp = byType.get("condicion")
+      if (!conditionProp || conditionProp.text !== current.text) {
+        needsUpdate = true
+      } else {
+        for (const variant of propositionVariants) {
+          if (!byType.has(variant)) {
+            needsUpdate = true
+            break
+          }
+        }
+      }
+
+      if (!needsUpdate) {
+        return current
+      }
+
+      const normalized: Proposition[] = []
+
+      const normalizedCondition = conditionProp
+        ? { ...conditionProp, text: current.text }
+        : {
+            id: `${current.id}-condicion`,
+            type: "condicion" as PropositionKind,
+            label: propositionTypeLabels.condicion,
+            text: current.text,
+            audios: [],
+          }
+
+      normalized.push(normalizedCondition)
+
+      for (const variant of propositionVariants) {
+        const existingVariant = byType.get(variant)
+        if (existingVariant) {
+          normalized.push(existingVariant)
+        } else {
+          normalized.push({
+            id: `${current.id}-${variant}`,
+            type: variant,
+            label: propositionTypeLabels[variant],
+            text: "",
+            audios: [],
+          })
+        }
+      }
+
+      const customProps = existing.filter((prop) => prop.type === "custom")
+      normalized.push(...customProps)
+
+      return {
+        ...current,
+        propositions: normalized,
+      }
+    })
   }
 
   const handleImportModalOpenChange = (open: boolean) => {
@@ -1505,104 +1605,42 @@ export default function PropositionsApp() {
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
-    updateSubtopicById(currentThemeId, id, (subtopic) => ({
-      ...subtopic,
-      text,
-    }))
+    updateSubtopicById(currentThemeId, id, (subtopic) => {
+      const updated: Subtopic = {
+        ...subtopic,
+        text,
+      }
+
+      if (subtopic.propositions) {
+        updated.propositions = subtopic.propositions.map((prop) =>
+          prop.type === "condicion"
+            ? {
+                ...prop,
+                text,
+              }
+            : prop,
+        )
+      }
+
+      return updated
+    })
   }
 
-  const openSubtopicDetail = (subtopicId: string) => {
-    if (!currentThemeId) return
-
-    const theme = themes.find((t) => t.id === currentThemeId)
-    const subtopic = theme?.subtopics.find((item) => item.id === subtopicId)
-
-    if (!subtopic) {
-      return
-    }
-
-    setCurrentSubtopicId(subtopicId)
-    setCurrentIndex(0)
-    setPendingPracticeIndex(subtopic.propositions && subtopic.propositions.length > 0 ? 0 : null)
-    setViewState("overview")
-  }
-
-  const evaluatePropositions = async (subtopicId: string) => {
+  const openOrPrepareSubtopic = (subtopicId: string) => {
     if (!currentThemeId) return
 
     const theme = themes.find((t) => t.id === currentThemeId)
     const subtopic = theme?.subtopics.find((s) => s.id === subtopicId)
-    if (!subtopic || !subtopic.text.trim()) return
 
-    console.log("[v0] Evaluating propositions for subtopic:", subtopic)
-    console.log("[v0] Subtopic has propositions?", !!subtopic.propositions)
-
-    if (subtopic.propositions && subtopic.propositions.length > 0) {
-      console.log("[v0] Propositions already exist, going to interface")
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setPendingPracticeIndex(0)
-      setViewState("overview")
+    if (!subtopic || !subtopic.text.trim()) {
       return
     }
 
-    console.log("[v0] No propositions found, generating with Groq...")
-    setIsGenerating(true)
-    try {
-      const result = await generatePropositions(subtopic.text)
-
-      if ("error" in result) {
-        throw new Error(result.error)
-      }
-
-      console.log("[v0] Generated propositions:", result)
-
-      const newPropositions: Proposition[] = [
-        {
-          id: `${subtopic.id}-condicion`,
-          type: "condicion",
-          label: propositionTypeLabels.condicion,
-          text: subtopic.text,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-reciproco`,
-          type: "reciproco",
-          label: propositionTypeLabels.reciproco,
-          text: result.reciproco,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-inverso`,
-          type: "inverso",
-          label: propositionTypeLabels.inverso,
-          text: result.inverso,
-          audios: [],
-        },
-        {
-          id: `${subtopic.id}-contrareciproco`,
-          type: "contrareciproco",
-          label: propositionTypeLabels.contrareciproco,
-          text: result.contrareciproco,
-          audios: [],
-        },
-      ]
-
-      updateSubtopicById(currentThemeId, subtopicId, (current) => ({
-        ...current,
-        propositions: newPropositions,
-      }))
-
-      setCurrentSubtopicId(subtopicId)
-      setCurrentIndex(0)
-      setPendingPracticeIndex(0)
-      setViewState("overview")
-    } catch (error) {
-      console.error("[v0] Error generating propositions:", error)
-      alert("Error al generar proposiciones. Por favor, intenta de nuevo.")
-    } finally {
-      setIsGenerating(false)
-    }
+    ensureStandardPropositions(currentThemeId, subtopicId, subtopic)
+    setCurrentSubtopicId(subtopicId)
+    setCurrentIndex(0)
+    setPendingPracticeIndex(0)
+    setViewState("overview")
   }
 
   const startRecording = async () => {
@@ -1751,6 +1789,57 @@ export default function PropositionsApp() {
     }
   }, [viewState, pendingPracticeIndex, propositions])
 
+  const handleGenerateVariant = async (
+    subtopicId: string,
+    propositionId: string,
+    variant: PropositionVariant,
+  ) => {
+    if (!currentThemeId) return
+
+    const theme = themes.find((t) => t.id === currentThemeId)
+    const subtopic = theme?.subtopics.find((s) => s.id === subtopicId)
+
+    if (!subtopic || !subtopic.text.trim()) {
+      return
+    }
+
+    setGeneratingPropositionId(propositionId)
+
+    try {
+      const { model, prompt } = getGroqSettings()
+      const response = await generateProposition(subtopic.text, variant, model, prompt)
+
+      if ("error" in response) {
+        throw new Error(response.error)
+      }
+
+      updateSubtopicById(currentThemeId, subtopicId, (current) => {
+        if (!current.propositions) {
+          return current
+        }
+
+        const updated = current.propositions.map((prop) =>
+          prop.id === propositionId
+            ? {
+                ...prop,
+                text: response.text,
+              }
+            : prop,
+        )
+
+        return {
+          ...current,
+          propositions: updated,
+        }
+      })
+    } catch (error) {
+      console.error("[v0] Error generating individual proposition:", error)
+      alert("Error al generar la proposición solicitada. Intenta nuevamente.")
+    } finally {
+      setGeneratingPropositionId(null)
+    }
+  }
+
   const expandCustomProposition = async (subtopicId: string, propositionId: string) => {
     if (!currentThemeId) return
 
@@ -1766,10 +1855,22 @@ export default function PropositionsApp() {
 
     setGeneratingPropositionId(propositionId)
     try {
-      const result = await generatePropositions(proposition.text)
+      const { model, prompt } = getGroqSettings()
 
-      if ("error" in result) {
-        throw new Error(result.error)
+      const generatedVariants: Record<PropositionVariant, string> = {
+        reciproco: "",
+        inverso: "",
+        contrareciproco: "",
+      }
+
+      for (const variant of propositionVariants) {
+        const response = await generateProposition(proposition.text, variant, model, prompt)
+
+        if ("error" in response) {
+          throw new Error(response.error)
+        }
+
+        generatedVariants[variant] = response.text
       }
 
       const generated: Proposition[] = [
@@ -1780,27 +1881,13 @@ export default function PropositionsApp() {
           text: proposition.text,
           audios: proposition.audios,
         },
-        {
-          id: `${propositionId}-reciproco`,
-          type: "reciproco",
-          label: propositionTypeLabels.reciproco,
-          text: result.reciproco,
+        ...propositionVariants.map((variant) => ({
+          id: `${propositionId}-${variant}`,
+          type: variant,
+          label: propositionTypeLabels[variant],
+          text: generatedVariants[variant],
           audios: [],
-        },
-        {
-          id: `${propositionId}-inverso`,
-          type: "inverso",
-          label: propositionTypeLabels.inverso,
-          text: result.inverso,
-          audios: [],
-        },
-        {
-          id: `${propositionId}-contrareciproco`,
-          type: "contrareciproco",
-          label: propositionTypeLabels.contrareciproco,
-          text: result.contrareciproco,
-          audios: [],
-        },
+        })),
       ]
 
       updateSubtopicById(currentThemeId, subtopicId, (current) => {
@@ -1857,7 +1944,8 @@ export default function PropositionsApp() {
     setRewritingPropositionId(target.id)
 
     try {
-      const result = await rewriteProposition(userPrompt)
+      const { model } = getGroqSettings()
+      const result = await rewriteProposition(userPrompt, model)
 
       if ("error" in result) {
         throw new Error(result.error)
@@ -2094,20 +2182,12 @@ export default function PropositionsApp() {
                       className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <Button
-                    onClick={() =>
-                      subtopic.propositions
-                        ? openSubtopicDetail(subtopic.id)
-                        : evaluatePropositions(subtopic.id)
-                    }
-                    disabled={!subtopic.text.trim() || isGenerating || isLoadingData}
-                    className="whitespace-nowrap"
-                  >
-                    {isGenerating
-                      ? "Generando..."
-                      : subtopic.propositions
-                        ? "Ver subtema"
-                        : "Generar proposiciones"}
-                  </Button>
+                      onClick={() => openOrPrepareSubtopic(subtopic.id)}
+                      disabled={!subtopic.text.trim() || isLoadingData}
+                      className="whitespace-nowrap"
+                    >
+                      {subtopic.propositions ? "Ver subtema" : "Abrir subtema"}
+                    </Button>
                   </div>
                 )
               })}
@@ -2173,10 +2253,10 @@ export default function PropositionsApp() {
                 Este subtema aún no tiene proposiciones generadas.
               </p>
               <Button
-                onClick={() => evaluatePropositions(currentSubtopic.id)}
-                disabled={isGenerating || !currentSubtopic.text.trim()}
+                onClick={() => openOrPrepareSubtopic(currentSubtopic.id)}
+                disabled={!currentSubtopic.text.trim()}
               >
-                {isGenerating ? "Generando..." : "Generar proposiciones"}
+                Abrir subtema
               </Button>
             </Card>
           ) : (
@@ -2200,20 +2280,47 @@ export default function PropositionsApp() {
                           {prop.label}
                         </p>
                         <div className="text-lg leading-relaxed text-foreground break-words">
-                          <MathText text={prop.text} />
+                          {prop.text?.trim() ? (
+                            <MathText text={prop.text} />
+                          ) : (
+                            <p className="italic text-muted-foreground">
+                              Genera {prop.label.toLowerCase()} para verla aquí.
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        {prop.type !== "custom" && prop.type !== "condicion" && currentSubtopic && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              handleGenerateVariant(
+                                currentSubtopic.id,
+                                prop.id,
+                                prop.type as PropositionVariant,
+                              )
+                            }
+                            disabled={generatingPropositionId === prop.id || isRecording}
+                            className="whitespace-nowrap"
+                          >
+                            {generatingPropositionId === prop.id ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                              </>
+                            ) : prop.text?.trim() ? (
+                              "Regenerar"
+                            ) : (
+                              "Generar"
+                            )}
+                          </Button>
+                        )}
                         {prop.type === "custom" && currentSubtopic && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
-                            disabled={
-                              generatingPropositionId === prop.id ||
-                              isGenerating ||
-                              isRecording
-                            }
+                            disabled={generatingPropositionId === prop.id || isRecording}
                             className="whitespace-nowrap"
                           >
                             {generatingPropositionId === prop.id ? (
@@ -2242,7 +2349,7 @@ export default function PropositionsApp() {
                           onClick={() => handleRewriteProposition(prop)}
                           className="hover:bg-primary/10"
                           title="Rehacer esta proposición"
-                          disabled={rewritingPropositionId === prop.id}
+                          disabled={rewritingPropositionId === prop.id || !prop.text?.trim()}
                         >
                           {rewritingPropositionId === prop.id ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
@@ -2256,6 +2363,7 @@ export default function PropositionsApp() {
                           onClick={() => goToProposition(index)}
                           className="hover:bg-primary/10"
                           title="Practicar esta proposición"
+                          disabled={!prop.text?.trim()}
                         >
                           <Headphones className="w-5 h-5" />
                         </Button>
@@ -2364,7 +2472,13 @@ export default function PropositionsApp() {
                 {currentProposition?.label}
               </p>
               <div className="text-2xl leading-relaxed text-foreground break-words">
-                <MathText text={currentProposition?.text ?? ""} />
+                {currentProposition?.text?.trim() ? (
+                  <MathText text={currentProposition.text} />
+                ) : (
+                  <p className="italic text-muted-foreground">
+                    Genera {currentProposition?.label.toLowerCase() ?? "esta proposición"} para practicarla.
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex flex-col items-end gap-3">
@@ -2375,7 +2489,10 @@ export default function PropositionsApp() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleRewriteProposition(currentProposition)}
-                    disabled={rewritingPropositionId === currentProposition.id}
+                    disabled={
+                      rewritingPropositionId === currentProposition.id ||
+                      !currentProposition.text?.trim()
+                    }
                     className="whitespace-nowrap"
                   >
                     {rewritingPropositionId === currentProposition.id ? (
@@ -2388,16 +2505,40 @@ export default function PropositionsApp() {
                   </Button>
                 )}
               </div>
+              {currentProposition &&
+                currentProposition.type !== "custom" &&
+                currentProposition.type !== "condicion" &&
+                currentSubtopic && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      handleGenerateVariant(
+                        currentSubtopic.id,
+                        currentProposition.id,
+                        currentProposition.type as PropositionVariant,
+                      )
+                    }
+                    disabled={generatingPropositionId === currentProposition.id || isRecording}
+                    className="whitespace-nowrap"
+                  >
+                    {generatingPropositionId === currentProposition.id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                      </>
+                    ) : currentProposition.text?.trim() ? (
+                      "Regenerar"
+                    ) : (
+                      "Generar"
+                    )}
+                  </Button>
+                )}
               {currentProposition?.type === "custom" && currentSubtopic && (
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => expandCustomProposition(currentSubtopic.id, currentProposition.id)}
-                  disabled={
-                    generatingPropositionId === currentProposition.id ||
-                    isGenerating ||
-                    isRecording
-                  }
+                  disabled={generatingPropositionId === currentProposition.id || isRecording}
                   className="whitespace-nowrap"
                 >
                   {generatingPropositionId === currentProposition.id ? (

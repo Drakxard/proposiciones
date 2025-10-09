@@ -7,26 +7,18 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getAvailableModels } from "@/app/actions"
+import { DEFAULT_MODEL, DEFAULT_PROMPT } from "@/lib/groq"
 
 interface SettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Según esta condición crea su recíproco, inverso, contra-recíproco.
-
-Salida obligatoria en formato JSON:
-{
-  "reciproco": "texto del recíproco",
-  "inverso": "texto del inverso",
-  "contrareciproco": "texto del contra-recíproco"
-}`
-
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
   const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -35,7 +27,34 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       setModel(savedModel)
       setPrompt(savedPrompt)
 
-      getAvailableModels().then(setAvailableModels)
+      setIsLoadingModels(true)
+      getAvailableModels()
+        .then((models) => {
+          let normalized = models.length ? [...models] : [DEFAULT_MODEL]
+
+          if (savedModel && !normalized.includes(savedModel)) {
+            normalized = [savedModel, ...normalized]
+          }
+
+          setAvailableModels(normalized)
+          setModel((current) => {
+            if (current && normalized.includes(current)) {
+              return current
+            }
+
+            if (savedModel && normalized.includes(savedModel)) {
+              return savedModel
+            }
+
+            return normalized[0]
+          })
+        })
+        .catch((error) => {
+          console.error("[v0] Error fetching Groq models:", error)
+          setAvailableModels([DEFAULT_MODEL])
+          setModel((current) => current || DEFAULT_MODEL)
+        })
+        .finally(() => setIsLoadingModels(false))
     }
   }, [open])
 
@@ -63,15 +82,21 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
           <div className="space-y-2">
             <Label htmlFor="model">Modelo de Groq</Label>
             <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona un modelo" />
+              <SelectTrigger disabled={isLoadingModels || availableModels.length === 0}>
+                <SelectValue placeholder={isLoadingModels ? "Cargando modelos..." : "Selecciona un modelo"} />
               </SelectTrigger>
               <SelectContent>
-                {availableModels.map((modelOption) => (
-                  <SelectItem key={modelOption} value={modelOption}>
-                    {modelOption}
-                  </SelectItem>
-                ))}
+                {availableModels.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">
+                    {isLoadingModels ? "Cargando modelos..." : "No se encontraron modelos disponibles"}
+                  </div>
+                ) : (
+                  availableModels.map((modelOption) => (
+                    <SelectItem key={modelOption} value={modelOption}>
+                      {modelOption}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
             <p className="text-sm text-muted-foreground">Selecciona el modelo de Groq a utilizar</p>
@@ -87,7 +112,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               className="font-mono text-sm"
             />
             <p className="text-sm text-muted-foreground">
-              Este prompt se enviará a Groq junto con la condición ingresada
+              Este prompt se enviará a Groq para generar cada variante individual cuando la solicites.
             </p>
           </div>
 
