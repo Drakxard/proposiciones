@@ -105,8 +105,16 @@ const buildCandidateVariations = (input: string): ParseCandidate[] => {
     addCandidate(`[${trimmed.slice(1, -1)}]`, "Se adaptó el formato de doble llave {{ }} a un arreglo JSON")
   }
 
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+  const looksLikeCommaSeparatedObjects = /^\{[\s\S]*\}\s*(,\s*\{[\s\S]*\}\s*)+$/
+  if (trimmed.startsWith("{") && trimmed.endsWith("}") && !looksLikeCommaSeparatedObjects.test(trimmed)) {
     addCandidate(`[${trimmed}]`, "Se envolvió el objeto en una lista JSON [ ]")
+  }
+
+  if (looksLikeCommaSeparatedObjects.test(trimmed)) {
+    addCandidate(
+      `[${trimmed}]`,
+      "Se envolvieron los objetos separados por comas en una lista JSON [ ]",
+    )
   }
 
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
