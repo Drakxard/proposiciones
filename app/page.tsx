@@ -194,6 +194,12 @@ export default function PropositionsApp() {
   const [isRecording, setIsRecording] = useState(false)
   const [countdown, setCountdown] = useState(5)
   const [showRelaxAnimation, setShowRelaxAnimation] = useState(false)
+  const [focusedItem, setFocusedItem] = useState<
+    | { scope: "theme"; id: string }
+    | { scope: "subtopic"; id: string }
+    | { scope: "proposition"; id: string }
+    | null
+  >(null)
   const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
 
   // 👇 de main
@@ -259,6 +265,98 @@ export default function PropositionsApp() {
         subtopic.id === subtopicId ? updater(subtopic) : subtopic,
       ),
     }))
+  }
+
+  const deleteTheme = (themeId: string) => {
+    setThemes((prev) => prev.filter((theme) => theme.id !== themeId))
+    if (currentThemeId === themeId) {
+      setCurrentThemeId(null)
+      setCurrentSubtopicId(null)
+      setViewState("themes")
+    }
+    if (focusedItem?.scope === "theme" && focusedItem.id === themeId) {
+      setFocusedItem(null)
+    }
+  }
+
+  const deleteSubtopic = (subtopicId: string) => {
+    if (!currentThemeId) return
+
+    const isDeletingCurrent = currentSubtopicId === subtopicId
+
+    updateThemeById(currentThemeId, (theme) => ({
+      ...theme,
+      subtopics: theme.subtopics.filter((subtopic) => subtopic.id !== subtopicId),
+    }))
+
+    if (isDeletingCurrent) {
+      setCurrentSubtopicId(null)
+      if (viewState !== "subtopics") {
+        setViewState("subtopics")
+      }
+    }
+
+    if (focusedItem?.scope === "subtopic" && focusedItem.id === subtopicId) {
+      setFocusedItem(null)
+    }
+  }
+
+  const deleteProposition = (propositionId: string) => {
+    if (!currentThemeId || !currentSubtopicId) return
+
+    const remainingPropositions = (currentSubtopic?.propositions ?? []).filter(
+      (prop) => prop.id !== propositionId,
+    )
+
+    setThemes((prevThemes) =>
+      prevThemes.map((theme) => {
+        if (theme.id !== currentThemeId) {
+          return theme
+        }
+
+        return {
+          ...theme,
+          subtopics: theme.subtopics.map((subtopic) => {
+            if (subtopic.id !== currentSubtopicId || !subtopic.propositions) {
+              return subtopic
+            }
+
+            const filtered = subtopic.propositions.filter((prop) => prop.id !== propositionId)
+
+            return {
+              ...subtopic,
+              propositions: filtered.length > 0 ? filtered : [],
+            }
+          }),
+        }
+      }),
+    )
+
+    if (remainingPropositions.length === 0) {
+      setCurrentIndex(0)
+    } else {
+      setCurrentIndex((prev) => Math.min(prev, remainingPropositions.length - 1))
+    }
+
+    if (focusedItem?.scope === "proposition" && focusedItem.id === propositionId) {
+      setFocusedItem(null)
+    }
+  }
+
+  const deleteFocusedItem = () => {
+    if (!focusedItem) return
+
+    switch (focusedItem.scope) {
+      case "theme":
+        deleteTheme(focusedItem.id)
+        break
+      case "subtopic":
+        deleteSubtopic(focusedItem.id)
+        break
+      case "proposition":
+        deleteProposition(focusedItem.id)
+        break
+    }
   }
 
   const MathText = ({ text }: { text: string }) => {
@@ -389,6 +487,8 @@ export default function PropositionsApp() {
     )
   }
 
+  const mediaRecorder = mediaRecorderRef.current
+
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       const activeElement = document.activeElement
@@ -425,11 +525,33 @@ export default function PropositionsApp() {
           stopRecording()
         }
       }
+
+      if (e.key.toLowerCase() === "q" || e.key.toLowerCase() === "x") {
+        if (
+          viewState === "themes" ||
+          viewState === "subtopics" ||
+          viewState === "overview"
+        ) {
+          e.preventDefault()
+          deleteFocusedItem()
+        }
+      }
     }
 
     window.addEventListener("keydown", handleKeyPress)
     return () => window.removeEventListener("keydown", handleKeyPress)
-  }, [viewState, propositions.length, mediaRecorderRef.current])
+  }, [
+    viewState,
+    propositions.length,
+    mediaRecorder,
+    focusedItem,
+    currentThemeId,
+    currentSubtopicId,
+  ])
+
+  useEffect(() => {
+    setFocusedItem(null)
+  }, [viewState])
 
   useEffect(() => {
     loadPersistedData()
@@ -1392,12 +1514,21 @@ export default function PropositionsApp() {
             </Card>
           ) : (
             <Card className="p-4 space-y-3">
-              {themes.map((theme) => (
-                <div
-                  key={theme.id}
-                  onClick={() => openTheme(theme.id)}
-                  className="flex items-center gap-4 p-4 rounded-lg border border-transparent hover:border-border hover:bg-muted/40 transition cursor-pointer"
-                >
+              {themes.map((theme) => {
+                const isSelected = focusedItem?.scope === "theme" && focusedItem.id === theme.id
+                return (
+                  <div
+                    key={theme.id}
+                    onClick={() => openTheme(theme.id)}
+                    onMouseEnter={() => setFocusedItem({ scope: "theme", id: theme.id })}
+                    onFocus={() => setFocusedItem({ scope: "theme", id: theme.id })}
+                    tabIndex={0}
+                    className={`flex items-center gap-4 p-4 rounded-lg border transition cursor-pointer focus:outline-none ${
+                      isSelected
+                        ? "border-primary bg-primary/10"
+                        : "border-transparent hover:border-border hover:bg-muted/40"
+                    }`}
+                  >
                   <input
                     type="text"
                     value={theme.name}
@@ -1408,9 +1539,13 @@ export default function PropositionsApp() {
                   />
                   <span className="text-sm text-muted-foreground">{theme.subtopics.length} subtemas</span>
                 </div>
-              ))}
+                )
+              })}
             </Card>
           )}
+          <p className="text-xs text-muted-foreground text-center">
+            Selecciona una fila y presiona Q o X para eliminarla.
+          </p>
         </div>
 
         <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
@@ -1465,16 +1600,27 @@ export default function PropositionsApp() {
             </Card>
           ) : (
             <Card className="p-6 space-y-4">
-              {subtopics.map((subtopic) => (
-                <div key={subtopic.id} className="flex items-center gap-4">
-                  <input
-                    type="text"
-                    value={subtopic.text}
-                    onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                    placeholder="Ingresa una condición o teorema..."
-                    className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <Button
+              {subtopics.map((subtopic) => {
+                const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
+                return (
+                  <div
+                    key={subtopic.id}
+                    className={`flex items-center gap-4 rounded-lg p-2 transition ${
+                      isSelected ? "bg-primary/10" : "hover:bg-muted/40"
+                    }`}
+                    onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                    onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                    tabIndex={0}
+                  >
+                    <input
+                      type="text"
+                      value={subtopic.text}
+                      onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
+                      onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                      placeholder="Ingresa una condición o teorema..."
+                      className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <Button
                     onClick={() =>
                       subtopic.propositions
                         ? openSubtopicDetail(subtopic.id)
@@ -1489,10 +1635,14 @@ export default function PropositionsApp() {
                         ? "Ver subtema"
                         : "Generar proposiciones"}
                   </Button>
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </Card>
           )}
+          <p className="text-xs text-muted-foreground text-center">
+            Selecciona una fila y presiona Q o X para eliminarla.
+          </p>
         </div>
 
         <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
@@ -1559,11 +1709,18 @@ export default function PropositionsApp() {
           ) : (
             <>
               <Card className="p-8 space-y-6">
-                {propositions.map((prop, index) => (
-                  <div
-                    key={prop.id}
-                    className="p-6 rounded-lg hover:bg-muted/50 transition-colors space-y-4"
-                  >
+                {propositions.map((prop, index) => {
+                  const isSelected = focusedItem?.scope === "proposition" && focusedItem.id === prop.id
+                  return (
+                    <div
+                      key={prop.id}
+                      className={`p-6 rounded-lg transition-colors space-y-4 ${
+                        isSelected ? "bg-primary/10" : "hover:bg-muted/50"
+                      }`}
+                      onMouseEnter={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                      onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                      tabIndex={0}
+                    >
                     <div className="flex items-start justify-between gap-6">
                       <div className="flex-1 space-y-2">
                         <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
@@ -1652,11 +1809,15 @@ export default function PropositionsApp() {
                         </div>
                       </div>
                     )}
-                  </div>
-                ))}
+                    </div>
+                  )
+                })}
               </Card>
               <p className="text-center text-sm text-muted-foreground">
                 Presiona la barra espaciadora para iniciar la práctica.
+              </p>
+              <p className="text-center text-xs text-muted-foreground">
+                Selecciona una proposición y presiona Q o X para eliminarla.
               </p>
             </>
           )}
