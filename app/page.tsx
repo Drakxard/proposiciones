@@ -1,6 +1,13 @@
 "use client"
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react"
+import type { KeyboardEvent as ReactKeyboardEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -87,6 +94,26 @@ interface Era {
   closedAt: number | null
   themes: Theme[]
 }
+
+type GroupedPropositionVariant = {
+  type: PropositionType
+  proposition: Proposition
+  index: number
+}
+
+type GroupedPropositionItem =
+  | {
+      kind: "group"
+      baseId: string
+      order: number
+      variants: GroupedPropositionVariant[]
+    }
+  | {
+      kind: "single"
+      order: number
+      proposition: Proposition
+      index: number
+    }
 
 const createEraId = () => `era-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -500,6 +527,60 @@ export default function PropositionsApp() {
       : null
   const propositions = currentSubtopic?.propositions || []
   const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
+  const [selectedVariantByGroup, setSelectedVariantByGroup] = useState<
+    Record<string, PropositionType>
+  >({})
+  const groupedPropositionItems = useMemo(() => {
+    const items: GroupedPropositionItem[] = []
+    const groupMap = new Map<string, GroupedPropositionItem & { kind: "group" }>()
+
+    propositions.forEach((prop, index) => {
+      const propositionType = prop.type as PropositionKind
+
+      if (STANDARD_PROPOSITION_TYPES.includes(propositionType as PropositionType)) {
+        const type = propositionType as PropositionType
+        const suffix = `-${type}`
+        const baseId = prop.id.endsWith(suffix)
+          ? prop.id.slice(0, -suffix.length)
+          : prop.id
+
+        let group = groupMap.get(baseId)
+        if (!group) {
+          group = {
+            kind: "group" as const,
+            baseId,
+            order: index,
+            variants: [],
+          }
+          groupMap.set(baseId, group)
+          items.push(group)
+        }
+
+        group.variants.push({ type, proposition: prop, index })
+      } else {
+        items.push({
+          kind: "single",
+          order: index,
+          proposition: prop,
+          index,
+        })
+      }
+    })
+
+    items.forEach((item) => {
+      if (item.kind === "group") {
+        item.variants.sort(
+          (a, b) =>
+            STANDARD_PROPOSITION_TYPES.indexOf(a.type) -
+            STANDARD_PROPOSITION_TYPES.indexOf(b.type),
+        )
+      }
+    })
+
+    items.sort((a, b) => a.order - b.order)
+
+    return items
+  }, [propositions])
   const hasContentAtIndex = useCallback(
     (index: number) => {
       const target = propositions[index]
@@ -534,6 +615,45 @@ export default function PropositionsApp() {
   const isNavigationLocked = isRecording || viewState === "countdown"
   const isVariantGenerationActive = generatingVariantId !== null
   const isGenerationBusy = generatingVariantId !== null || generatingPropositionId !== null
+
+  useEffect(() => {
+    setSelectedVariantByGroup((prev) => {
+      let changed = false
+      const next: Record<string, PropositionType> = {}
+
+      groupedPropositionItems.forEach((item) => {
+        if (item.kind !== "group" || item.variants.length === 0) {
+          return
+        }
+
+        const availableTypes = item.variants.map((variant) => variant.type)
+        const previousSelection = prev[item.baseId]
+        let selected =
+          previousSelection && availableTypes.includes(previousSelection)
+            ? previousSelection
+            : undefined
+
+        if (!selected) {
+          const withContent = item.variants.find((variant) =>
+            Boolean(variant.proposition.text.trim()),
+          )
+          selected = withContent?.type ?? availableTypes[0]
+        }
+
+        next[item.baseId] = selected
+
+        if (prev[item.baseId] !== selected) {
+          changed = true
+        }
+      })
+
+      if (Object.keys(prev).length !== Object.keys(next).length) {
+        changed = true
+      }
+
+      return changed ? next : prev
+    })
+  }, [groupedPropositionItems])
 
   const updateThemeById = (themeId: string, updater: (theme: Theme) => Theme) => {
     setThemes((prev) => prev.map((theme) => (theme.id === themeId ? updater(theme) : theme)))
@@ -2678,146 +2798,415 @@ export default function PropositionsApp() {
           ) : (
             <>
               <Card className="p-8 space-y-6">
-                {propositions.map((prop, index) => {
-                  const isSelected = focusedItem?.scope === "proposition" && focusedItem.id === prop.id
+                {groupedPropositionItems.map((item) => {
+                  if (item.kind === "single") {
+                    const prop = item.proposition
+                    const index = item.index
+                    const isSelected =
+                      focusedItem?.scope === "proposition" && focusedItem.id === prop.id
+                    const hasContent = prop.text.trim().length > 0
+                    const isStandardVariant =
+                      prop.type !== "custom" && prop.type !== "condicion"
+
+                    return (
+                      <div
+                        key={prop.id}
+                        className={`p-6 rounded-lg transition-colors space-y-4 ${
+                          isSelected ? "bg-primary/10" : "hover:bg-muted/50"
+                        }`}
+                        onMouseEnter={() =>
+                          setFocusedItem({ scope: "proposition", id: prop.id })
+                        }
+                        onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                        tabIndex={0}
+                      >
+                        <div className="flex items-start justify-between gap-6">
+                          <div className="flex-1 space-y-2">
+                            <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                              {prop.label}
+                            </p>
+                            <div className="text-lg leading-relaxed text-foreground break-words">
+                              {hasContent ? (
+                                <MathText text={prop.text} />
+                              ) : (
+                                <p className="text-sm italic text-muted-foreground">
+                                  Aún no has generado esta proposición.
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {isStandardVariant && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => generateVariantForSubtopic(prop)}
+                                disabled={
+                                  generatingVariantId === prop.id ||
+                                  generatingPropositionId !== null ||
+                                  isRecording
+                                }
+                                className="whitespace-nowrap"
+                              >
+                                {generatingVariantId === prop.id ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                  </>
+                                ) : hasContent ? (
+                                  "Regenerar"
+                                ) : (
+                                  "Generar"
+                                )}
+                              </Button>
+                            )}
+                            {prop.type === "custom" && currentSubtopic && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
+                                disabled={
+                                  generatingPropositionId === prop.id ||
+                                  isVariantGenerationActive ||
+                                  isRecording
+                                }
+                                className="whitespace-nowrap"
+                              >
+                                {generatingPropositionId === prop.id ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                  </>
+                                ) : (
+                                  "Generar variantes"
+                                )}
+                              </Button>
+                            )}
+                            {prop.audios.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => playRecordedAudio(index)}
+                                className="hover:bg-primary/10"
+                                title="Reproducir último audio"
+                              >
+                                <Play className="w-5 h-5" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleRewriteProposition(prop)}
+                              className="hover:bg-primary/10"
+                              title="Rehacer esta proposición"
+                              disabled={rewritingPropositionId === prop.id || !hasContent}
+                            >
+                              {rewritingPropositionId === prop.id ? (
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="w-5 h-5" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => goToProposition(index)}
+                              className="hover:bg-primary/10"
+                              title="Practicar esta proposición"
+                              disabled={!hasContent}
+                            >
+                              <Headphones className="w-5 h-5" />
+                            </Button>
+                          </div>
+                        </div>
+                        {rewritePreview && rewritePreview.propositionId === prop.id && (
+                          <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                            <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                              Previsualización
+                            </p>
+                            <div className="text-base leading-relaxed text-foreground break-words">
+                              <MathText text={rewritePreview.text} />
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button size="sm" onClick={confirmRewritePreview}>
+                                Confirmar
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                                Reintentar
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+
+                  const availableTypes = STANDARD_PROPOSITION_TYPES.filter((type) =>
+                    item.variants.some((variant) => variant.type === type),
+                  )
+                  const selectedType =
+                    selectedVariantByGroup[item.baseId] ?? availableTypes[0] ?? "condicion"
+                  const selectedVariant =
+                    item.variants.find((variant) => variant.type === selectedType) ??
+                    item.variants[0]
+
+                  if (!selectedVariant) {
+                    return null
+                  }
+
+                  const prop = selectedVariant.proposition
+                  const index = selectedVariant.index
                   const hasContent = prop.text.trim().length > 0
+                  const isSelected =
+                    focusedItem?.scope === "proposition" && focusedItem.id === prop.id
                   const isStandardVariant =
                     prop.type !== "custom" && prop.type !== "condicion"
 
+                  const navigateToVariant = (direction: "previous" | "next") => {
+                    if (availableTypes.length <= 1) {
+                      return
+                    }
+
+                    const currentPosition = availableTypes.indexOf(selectedType)
+                    const nextPosition =
+                      direction === "previous"
+                        ? Math.max(currentPosition - 1, 0)
+                        : Math.min(currentPosition + 1, availableTypes.length - 1)
+
+                    if (nextPosition === currentPosition) {
+                      return
+                    }
+
+                    const nextType = availableTypes[nextPosition]
+
+                    setSelectedVariantByGroup((prev) => {
+                      if (prev[item.baseId] === nextType) {
+                        return prev
+                      }
+
+                      return { ...prev, [item.baseId]: nextType }
+                    })
+
+                    const nextVariant = item.variants.find((variant) => variant.type === nextType)
+
+                    if (nextVariant) {
+                      setFocusedItem({ scope: "proposition", id: nextVariant.proposition.id })
+
+                      if (
+                        nextVariant.proposition.type !== "condicion" &&
+                        !nextVariant.proposition.text.trim() &&
+                        generatingVariantId === null &&
+                        generatingPropositionId === null &&
+                        !isRecording
+                      ) {
+                        void generateVariantForSubtopic(nextVariant.proposition)
+                      }
+                    }
+                  }
+
+                  const handleVariantSelect = (type: PropositionType) => {
+                    if (!availableTypes.includes(type) || type === selectedType) {
+                      return
+                    }
+
+                    setSelectedVariantByGroup((prev) => {
+                      if (prev[item.baseId] === type) {
+                        return prev
+                      }
+
+                      return { ...prev, [item.baseId]: type }
+                    })
+
+                    const nextVariant = item.variants.find((variant) => variant.type === type)
+
+                    if (nextVariant) {
+                      setFocusedItem({ scope: "proposition", id: nextVariant.proposition.id })
+
+                      if (
+                        nextVariant.proposition.type !== "condicion" &&
+                        !nextVariant.proposition.text.trim() &&
+                        generatingVariantId === null &&
+                        generatingPropositionId === null &&
+                        !isRecording
+                      ) {
+                        void generateVariantForSubtopic(nextVariant.proposition)
+                      }
+                    }
+                  }
+
+                  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+                    if (event.key === "ArrowLeft") {
+                      event.preventDefault()
+                      navigateToVariant("previous")
+                    } else if (event.key === "ArrowRight") {
+                      event.preventDefault()
+                      navigateToVariant("next")
+                    }
+                  }
+
                   return (
                     <div
-                      key={prop.id}
+                      key={`group-${item.baseId}`}
                       className={`p-6 rounded-lg transition-colors space-y-4 ${
                         isSelected ? "bg-primary/10" : "hover:bg-muted/50"
                       }`}
-                      onMouseEnter={() => setFocusedItem({ scope: "proposition", id: prop.id })}
-                      onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
                       tabIndex={0}
+                      onMouseEnter={() =>
+                        setFocusedItem({ scope: "proposition", id: prop.id })
+                      }
+                      onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                      onKeyDown={handleKeyDown}
                     >
-                    <div className="flex items-start justify-between gap-6">
-                      <div className="flex-1 space-y-2">
-                        <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                          {prop.label}
-                        </p>
-                        <div className="text-lg leading-relaxed text-foreground break-words">
-                          {hasContent ? (
-                            <MathText text={prop.text} />
-                          ) : (
-                            <p className="text-sm italic text-muted-foreground">
-                              Aún no has generado esta proposición.
+                      <div className="flex items-start justify-between gap-6">
+                        <div className="flex-1 space-y-3">
+                          <div className="flex items-center gap-3">
+                            <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                              {prop.label}
                             </p>
-                          )}
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <button
+                                type="button"
+                                onClick={() => navigateToVariant("previous")}
+                                className="rounded-full px-2 py-1 transition hover:bg-muted"
+                                aria-label="Variante anterior"
+                              >
+                                {"<-"}
+                              </button>
+                              <span>{propositionTypeLabels[selectedType]}</span>
+                              <button
+                                type="button"
+                                onClick={() => navigateToVariant("next")}
+                                className="rounded-full px-2 py-1 transition hover:bg-muted"
+                                aria-label="Variante siguiente"
+                              >
+                                {"->"}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {availableTypes.map((type) => {
+                              const variant = item.variants.find((entry) => entry.type === type)
+                              const isActive = type === selectedType
+                              const variantHasContent = Boolean(variant?.proposition.text.trim())
+
+                              return (
+                                <button
+                                  key={type}
+                                  type="button"
+                                  onClick={() => handleVariantSelect(type)}
+                                  className={`rounded-full border px-2 py-1 text-xs transition ${
+                                    isActive
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "border-transparent text-muted-foreground hover:border-border hover:bg-muted/50"
+                                  } ${variantHasContent ? "" : "italic"}`}
+                                >
+                                  {propositionTypeLabels[type]}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="text-lg leading-relaxed text-foreground break-words">
+                            {hasContent ? (
+                              <MathText text={prop.text} />
+                            ) : (
+                              <p className="text-sm italic text-muted-foreground">
+                                Aún no has generado esta variante.
+                              </p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isStandardVariant && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => generateVariantForSubtopic(prop)}
-                            disabled={
-                              generatingVariantId === prop.id ||
-                              generatingPropositionId !== null ||
-                              isRecording
-                            }
-                            className="whitespace-nowrap"
-                          >
-                            {generatingVariantId === prop.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                              </>
-                            ) : hasContent ? (
-                              "Regenerar"
-                            ) : (
-                              "Generar"
-                            )}
-                          </Button>
-                        )}
-                        {prop.type === "custom" && currentSubtopic && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
-                            disabled={
-                              generatingPropositionId === prop.id ||
-                              isVariantGenerationActive ||
-                              isRecording
-                            }
-                            className="whitespace-nowrap"
-                          >
-                            {generatingPropositionId === prop.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                              </>
-                            ) : (
-                              "Generar variantes"
-                            )}
-                          </Button>
-                        )}
-                        {prop.audios.length > 0 && (
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {isStandardVariant && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => generateVariantForSubtopic(prop)}
+                              disabled={
+                                generatingVariantId === prop.id ||
+                                generatingPropositionId !== null ||
+                                isRecording
+                              }
+                              className="whitespace-nowrap"
+                            >
+                              {generatingVariantId === prop.id ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                </>
+                              ) : hasContent ? (
+                                "Regenerar"
+                              ) : (
+                                "Generar"
+                              )}
+                            </Button>
+                          )}
+                          {prop.audios.length > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => playRecordedAudio(index)}
+                              className="hover:bg-primary/10"
+                              title="Reproducir último audio"
+                            >
+                              <Play className="w-5 h-5" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => playRecordedAudio(index)}
+                            onClick={() => handleRewriteProposition(prop)}
                             className="hover:bg-primary/10"
-                            title="Reproducir último audio"
+                            title="Rehacer esta proposición"
+                            disabled={rewritingPropositionId === prop.id || !hasContent}
                           >
-                            <Play className="w-5 h-5" />
+                            {rewritingPropositionId === prop.id ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <RotateCcw className="w-5 h-5" />
+                            )}
                           </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRewriteProposition(prop)}
-                          className="hover:bg-primary/10"
-                          title="Rehacer esta proposición"
-                          disabled={rewritingPropositionId === prop.id || !hasContent}
-                        >
-                          {rewritingPropositionId === prop.id ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <RotateCcw className="w-5 h-5" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => goToProposition(index)}
-                          className="hover:bg-primary/10"
-                          title="Practicar esta proposición"
-                          disabled={!hasContent}
-                        >
-                          <Headphones className="w-5 h-5" />
-                        </Button>
-                      </div>
-                    </div>
-                    {rewritePreview && rewritePreview.propositionId === prop.id && (
-                      <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
-                        <p className="text-sm font-medium text-primary uppercase tracking-wide">
-                          Previsualización
-                        </p>
-                        <div className="text-base leading-relaxed text-foreground break-words">
-                          <MathText text={rewritePreview.text} />
-                        </div>
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button size="sm" onClick={confirmRewritePreview}>
-                            Confirmar
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={retryRewritePreview}>
-                            Reintentar
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
-                            Cancelar
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => goToProposition(index)}
+                            className="hover:bg-primary/10"
+                            title="Practicar esta proposición"
+                            disabled={!hasContent}
+                          >
+                            <Headphones className="w-5 h-5" />
                           </Button>
                         </div>
                       </div>
-                    )}
+                      {rewritePreview && rewritePreview.propositionId === prop.id && (
+                        <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                          <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                            Previsualización
+                          </p>
+                          <div className="text-base leading-relaxed text-foreground break-words">
+                            <MathText text={rewritePreview.text} />
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button size="sm" onClick={confirmRewritePreview}>
+                              Confirmar
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                              Reintentar
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                              Cancelar
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
               </Card>
               <p className="text-center text-sm text-muted-foreground">
                 Presiona la barra espaciadora para iniciar la práctica.
+              </p>
+              <p className="text-center text-sm text-muted-foreground">
+                Usa las flechas ← → mientras una fila está seleccionada para cambiar entre variantes.
               </p>
               <p className="text-center text-xs text-muted-foreground">
                 Selecciona una proposición y presiona Q o X para eliminarla.
