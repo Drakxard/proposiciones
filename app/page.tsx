@@ -45,6 +45,7 @@ import {
   writeBlobFile,
   readBlobFile,
 } from "@/lib/file-system"
+import { parseClipboardJsonWithDiagnostics } from "@/lib/clipboard"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 
@@ -290,6 +291,7 @@ export default function PropositionsApp() {
   >(null)
   const hasTriedExternalNavigationRefresh = useRef(false)
   const hasRefreshedForPendingExternalNavigation = useRef(false)
+  const attemptedClipboardImportsRef = useRef<Set<string>>(new Set())
 
   // 👇 de main
   const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
@@ -582,6 +584,143 @@ export default function PropositionsApp() {
     })
   }
 
+  const attemptAutomaticImportFromClipboard = useCallback(
+    async (themeId: string, subtopicId: string, baseSubtopic: Subtopic) => {
+      if (attemptedClipboardImportsRef.current.has(subtopicId)) {
+        return
+      }
+
+      attemptedClipboardImportsRef.current.add(subtopicId)
+
+      const hasExistingCondition = Boolean(baseSubtopic.text.trim())
+      const hasExistingPropositions = (baseSubtopic.propositions ?? []).some(
+        (prop) => prop.text.trim().length > 0,
+      )
+
+      if (hasExistingCondition || hasExistingPropositions) {
+        return
+      }
+
+      if (!navigator.clipboard?.readText) {
+        return
+      }
+
+      let clipboardText = ""
+      try {
+        clipboardText = await navigator.clipboard.readText()
+      } catch (error) {
+        console.warn(
+          "[v0] No se pudo leer el portapapeles para importar automáticamente el subtema:",
+          error,
+        )
+        return
+      }
+
+      if (!clipboardText.trim()) {
+        return
+      }
+
+      const diagnostics = parseClipboardJsonWithDiagnostics(clipboardText)
+
+      if (!diagnostics.success || !diagnostics.parsed?.length) {
+        return
+      }
+
+      const [subtopicInfo, ...propositionEntries] = diagnostics.parsed
+
+      const conditionTextRaw =
+        typeof subtopicInfo === "string"
+          ? subtopicInfo
+          : typeof subtopicInfo?.texto === "string"
+            ? subtopicInfo.texto
+            : typeof subtopicInfo?.text === "string"
+              ? subtopicInfo.text
+              : typeof subtopicInfo?.condicion === "string"
+                ? subtopicInfo.condicion
+                : ""
+
+      const conditionText = conditionTextRaw?.toString().trim()
+
+      if (!conditionText) {
+        return
+      }
+
+      const parsedPropositions = propositionEntries
+        .map((entry: any, index: number) => {
+          const rawTextValue =
+            typeof entry === "string"
+              ? entry
+              : entry?.texto ?? (typeof entry === "number" ? entry.toString() : "")
+
+          const textValue =
+            typeof rawTextValue === "string" ? rawTextValue : String(rawTextValue ?? "")
+
+          const incomingType = typeof entry?.tipo === "string" ? (entry.tipo as PropositionKind) : undefined
+          const baseType: PropositionKind = incomingType ?? "custom"
+          const label =
+            typeof entry?.etiqueta === "string"
+              ? entry.etiqueta
+              : baseType !== "custom" && propositionTypeLabels[baseType as PropositionType]
+                ? propositionTypeLabels[baseType as PropositionType]
+                : getLabelForProposition(baseType, index)
+
+          return {
+            type: baseType,
+            label,
+            text: textValue,
+          }
+        })
+        .filter((item) => item.text.trim().length > 0)
+
+      if (!parsedPropositions.length && !conditionText) {
+        return
+      }
+
+      const timestamp = Date.now().toString(36)
+
+      updateSubtopicById(themeId, subtopicId, (subtopic) => {
+        const basePropositions = (subtopic.propositions ?? []).map((prop) => ({
+          ...prop,
+          audios: [...prop.audios],
+        }))
+
+        const updatedPropositions = [...basePropositions]
+
+        parsedPropositions.forEach((entry, index) => {
+          if (entry.type !== "custom") {
+            const existingIndex = updatedPropositions.findIndex((prop) => prop.type === entry.type)
+            if (existingIndex !== -1) {
+              const target = updatedPropositions[existingIndex]
+              updatedPropositions[existingIndex] = {
+                ...target,
+                label: entry.label ?? target.label ?? getLabelForProposition(entry.type, existingIndex),
+                text: entry.text,
+              }
+              return
+            }
+          }
+
+          updatedPropositions.push({
+            id: `${subtopic.id}-auto-${timestamp}-${index}`,
+            type: entry.type,
+            label: entry.label ?? getLabelForProposition(entry.type, updatedPropositions.length),
+            text: entry.text,
+            audios: [],
+          })
+        })
+
+        return {
+          ...subtopic,
+          text: conditionText,
+          propositions: updatedPropositions,
+        }
+      })
+
+      setCurrentIndex(0)
+    },
+    [updateSubtopicById],
+  )
+
   useEffect(() => {
     if (!pendingExternalNavigation) {
       return
@@ -656,6 +795,7 @@ export default function PropositionsApp() {
     }
 
     ensureStandardPropositions(themeId, subtopicId)
+    void attemptAutomaticImportFromClipboard(themeId, subtopicId, subtopic)
 
     const initialIndex = subtopic.propositions
       ? subtopic.propositions.findIndex((prop) => prop.text.trim())
@@ -678,6 +818,7 @@ export default function PropositionsApp() {
     themes,
     ensureStandardPropositions,
     refreshAppStateForExternalNavigation,
+    attemptAutomaticImportFromClipboard,
   ])
 
   const getGroqSettings = (): {
