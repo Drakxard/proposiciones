@@ -1,3 +1,5 @@
+import { ensureStringId, normalizeStringId } from "@/lib/utils"
+
 import type {
   StoredAppState,
   StoredEra,
@@ -51,27 +53,55 @@ export const parseExternalSubtopicPayload = (
   return { id, name: sanitizedName }
 }
 
-const cloneStoredProposition = (proposition: StoredProposition): StoredProposition => ({
+const cloneStoredProposition = (
+  proposition: StoredProposition,
+  subtopicId: string,
+  index: number,
+): StoredProposition => ({
   ...proposition,
+  id: ensureStringId(proposition.id, `${subtopicId}-${index}`),
   audios: [...proposition.audios],
 })
 
-const cloneStoredSubtopic = (subtopic: StoredSubtopic): StoredSubtopic => ({
-  ...subtopic,
-  propositions: subtopic.propositions
-    ? subtopic.propositions.map(cloneStoredProposition)
-    : null,
-})
+const cloneStoredSubtopic = (
+  subtopic: StoredSubtopic,
+  themeId: string,
+  index: number,
+): StoredSubtopic => {
+  const subtopicId = ensureStringId(subtopic.id, `${themeId}-subtopic-${index}`)
 
-const cloneStoredTheme = (theme: StoredTheme): StoredTheme => ({
-  ...theme,
-  subtopics: theme.subtopics.map(cloneStoredSubtopic),
-})
+  return {
+    ...subtopic,
+    id: subtopicId,
+    propositions: subtopic.propositions
+      ? subtopic.propositions.map((proposition, propIndex) =>
+          cloneStoredProposition(proposition, subtopicId, propIndex),
+        )
+      : null,
+  }
+}
 
-const cloneStoredEra = (era: StoredEra): StoredEra => ({
-  ...era,
-  themes: era.themes.map(cloneStoredTheme),
-})
+const cloneStoredTheme = (theme: StoredTheme, eraId: string, index: number): StoredTheme => {
+  const themeId = ensureStringId(theme.id, `${eraId}-theme-${index}`)
+
+  return {
+    ...theme,
+    id: themeId,
+    subtopics: theme.subtopics.map((subtopic, subIndex) =>
+      cloneStoredSubtopic(subtopic, themeId, subIndex),
+    ),
+  }
+}
+
+const cloneStoredEra = (era: StoredEra): StoredEra => {
+  const eraId = ensureStringId(era.id, `era-${Date.now().toString(36)}`)
+
+  return {
+    ...era,
+    id: eraId,
+    themes: era.themes.map((theme, themeIndex) => cloneStoredTheme(theme, eraId, themeIndex)),
+  }
+}
 
 export const createDefaultAppState = (): StoredAppState => {
   const timestamp = Date.now()
@@ -107,10 +137,13 @@ export const upsertExternalSubtopic = (
   payload: ExternalSubtopicPayload,
 ): StoredAppState => {
   const timestamp = Date.now()
-  const { id, name } = payload
+  const { name } = payload
+  const payloadId = ensureStringId(payload.id, payload.id)
 
   const currentThemes = state.currentEra.themes
-  let existingThemeIndex = currentThemes.findIndex((theme) => theme.id === EXTERNAL_THEME_ID)
+  let existingThemeIndex = currentThemes.findIndex(
+    (theme) => normalizeStringId(theme.id) === EXTERNAL_THEME_ID,
+  )
 
   let updatedThemes: StoredTheme[]
 
@@ -118,7 +151,7 @@ export const upsertExternalSubtopic = (
     const newTheme: StoredTheme = {
       id: EXTERNAL_THEME_ID,
       name: EXTERNAL_THEME_NAME,
-      subtopics: [{ id, text: name, propositions: null }],
+      subtopics: [{ id: payloadId, text: name, propositions: null }],
     }
 
     updatedThemes = [...currentThemes, newTheme]
@@ -128,11 +161,30 @@ export const upsertExternalSubtopic = (
         return theme
       }
 
-      const subtopics = [...theme.subtopics]
-      const existingSubtopicIndex = subtopics.findIndex((subtopic) => subtopic.id === id)
+      const subtopics = theme.subtopics.map((subtopic, subIndex) => {
+        const normalizedSubtopicId = ensureStringId(
+          subtopic.id,
+          `${EXTERNAL_THEME_ID}-subtopic-${subIndex}`,
+        )
+
+        return {
+          ...subtopic,
+          id: normalizedSubtopicId,
+          propositions: subtopic.propositions
+            ? subtopic.propositions.map((proposition, propIndex) => ({
+                ...proposition,
+                id: ensureStringId(proposition.id, `${normalizedSubtopicId}-${propIndex}`),
+                audios: [...proposition.audios],
+              }))
+            : null,
+        }
+      })
+      const existingSubtopicIndex = subtopics.findIndex(
+        (subtopic) => normalizeStringId(subtopic.id) === payloadId,
+      )
 
       if (existingSubtopicIndex === -1) {
-        subtopics.push({ id, text: name, propositions: null })
+        subtopics.push({ id: payloadId, text: name, propositions: null })
       } else {
         const existing = subtopics[existingSubtopicIndex]
         subtopics[existingSubtopicIndex] = {
@@ -150,6 +202,7 @@ export const upsertExternalSubtopic = (
 
       return {
         ...theme,
+        id: EXTERNAL_THEME_ID,
         subtopics,
       }
     })
@@ -169,15 +222,69 @@ export const findSubtopicInAppState = (
   state: StoredAppState | null | undefined,
   id: string,
 ): { subtopic: StoredSubtopic; theme: StoredTheme; era: StoredEra } | null => {
-  if (!state) {
+  const normalizedTargetId = normalizeStringId(id)
+
+  if (!state || !normalizedTargetId) {
     return null
   }
 
   const searchInEra = (era: StoredEra) => {
-    for (const theme of era.themes) {
-      const match = theme.subtopics.find((subtopic) => subtopic.id === id)
-      if (match) {
-        return { subtopic: match, theme, era }
+    const eraId = ensureStringId(era.id, `era-${Date.now().toString(36)}`)
+
+    for (let themeIndex = 0; themeIndex < era.themes.length; themeIndex += 1) {
+      const theme = era.themes[themeIndex]
+      const themeId = ensureStringId(theme.id, `${eraId}-theme-${themeIndex}`)
+
+      for (let subIndex = 0; subIndex < theme.subtopics.length; subIndex += 1) {
+        const subtopic = theme.subtopics[subIndex]
+        const subtopicId = ensureStringId(subtopic.id, `${themeId}-subtopic-${subIndex}`)
+
+        if (subtopicId === normalizedTargetId) {
+          return {
+            subtopic: {
+              ...subtopic,
+              id: subtopicId,
+              propositions: subtopic.propositions
+                ? subtopic.propositions.map((proposition, propIndex) => ({
+                    ...proposition,
+                    id: ensureStringId(proposition.id, `${subtopicId}-${propIndex}`),
+                    audios: [...proposition.audios],
+                  }))
+                : null,
+            },
+            theme: {
+              ...theme,
+              id: themeId,
+              subtopics: theme.subtopics.map((item, idx) =>
+                idx === subIndex
+                  ? {
+                      ...subtopic,
+                      id: subtopicId,
+                      propositions: subtopic.propositions
+                        ? subtopic.propositions.map((proposition, propIndex) => ({
+                            ...proposition,
+                            id: ensureStringId(proposition.id, `${subtopicId}-${propIndex}`),
+                            audios: [...proposition.audios],
+                          }))
+                        : null,
+                    }
+                  : item,
+              ),
+            },
+            era: {
+              ...era,
+              id: eraId,
+              themes: era.themes.map((item, idx) =>
+                idx === themeIndex
+                  ? {
+                      ...theme,
+                      id: themeId,
+                    }
+                  : item,
+              ),
+            },
+          }
+        }
       }
     }
     return null
