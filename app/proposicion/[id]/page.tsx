@@ -125,8 +125,11 @@ const extractSubtopicImport = (
     "texto" in first
   ) {
     const maybeText = sanitizeClipboardTextValue(first.texto)
-    if (maybeText.trim()) {
-      nextText = maybeText
+    const trimmedText = maybeText.trim()
+    const currentText = subtopic.text.trim()
+
+    if (trimmedText && !currentText) {
+      nextText = trimmedText
     }
     remaining = parsed.slice(1)
   }

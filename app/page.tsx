@@ -547,26 +547,40 @@ export default function PropositionsApp() {
     updateSubtopicById(themeId, subtopicId, (subtopic) => {
       const existing = subtopic.propositions ?? []
 
-      const standardEntries = STANDARD_PROPOSITION_TYPES.map((type) => {
-        const existingEntry = existing.find((prop) => prop.type === type)
-        const label = propositionTypeLabels[type]
+      const standardEntries = STANDARD_PROPOSITION_TYPES.map((type, index) => {
+        const existingEntry = existing.find((prop) => prop.type === type) ?? null
+        const label = getLabelForProposition(type, index)
 
         if (existingEntry) {
+          const existingText =
+            typeof existingEntry.text === "string" ? existingEntry.text : ""
+          const hasExistingText = existingText.trim().length > 0
+          const resolvedText = hasExistingText
+            ? existingText
+            : type === "condicion"
+              ? subtopic.text
+              : ""
+
           return {
             ...existingEntry,
             id: existingEntry.id ?? `${subtopic.id}-${type}`,
             type,
             label,
-            text: type === "condicion" ? subtopic.text : existingEntry.text,
+            text: resolvedText,
             audios: [...existingEntry.audios],
           }
         }
+
+        const defaultText =
+          type === "condicion" && subtopic.text.trim().length > 0
+            ? subtopic.text
+            : ""
 
         return {
           id: `${subtopic.id}-${type}`,
           type,
           label,
-          text: type === "condicion" ? subtopic.text : "",
+          text: defaultText,
           audios: [],
         }
       })
