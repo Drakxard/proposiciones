@@ -30,9 +30,12 @@ const CreateSubtopicPage = () => {
   }, [subtopicId])
 
   useEffect(() => {
+    console.log("[nuevaproposicion] Received payload", payload)
+
     const parsed = parseExternalSubtopicPayload(payload)
 
     if (!parsed) {
+      console.error("[nuevaproposicion] Could not parse external payload")
       setError(
         'No se pudo leer el identificador y el nombre del subtema. Asegúrate de usar el formato /nuevaproposicion/{id}="Nombre".'
       )
@@ -40,6 +43,7 @@ const CreateSubtopicPage = () => {
       return
     }
 
+    console.log("[nuevaproposicion] Parsed payload", parsed)
     setSubtopicId(parsed.id)
 
     let cancelled = false
@@ -47,10 +51,25 @@ const CreateSubtopicPage = () => {
     const persistSubtopic = async () => {
       try {
         const stored = await loadAppState()
+        console.log("[nuevaproposicion] Loaded stored app state", {
+          hasStoredState: Boolean(stored),
+          currentEraId: stored?.currentEra?.id,
+          themeCount: stored?.currentEra?.themes?.length,
+        })
         const prepared = prepareStateForExternalSubtopic(stored)
+        console.log("[nuevaproposicion] Prepared state for insertion", {
+          currentEraId: prepared.currentEra.id,
+          themeCount: prepared.currentEra.themes.length,
+        })
         const updated = upsertExternalSubtopic(prepared, parsed)
+        console.log("[nuevaproposicion] Upserted external subtopic", {
+          themeCount: updated.currentEra.themes.length,
+          subtopicId: parsed.id,
+          themeIds: updated.currentEra.themes.map((theme) => theme.id),
+        })
 
         await saveAppState(updated)
+        console.log("[nuevaproposicion] Persisted updated state")
 
         if (!cancelled) {
           setStatus("redirecting")
