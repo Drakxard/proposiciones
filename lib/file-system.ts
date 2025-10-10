@@ -3,6 +3,8 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from "idb"
 
+import type { StoredAppState, StoredEra } from "@/lib/storage"
+
 interface FileSystemDB extends DBSchema {
   "directory-handle": {
     key: string
@@ -178,4 +180,80 @@ export async function listFiles(dirHandle: FileSystemDirectoryHandle): Promise<s
     console.error("[v0] Error listing files:", error)
   }
   return files
+}
+
+const prepareEraForJson = (era: StoredEra) => ({
+  id: era.id,
+  name: era.name,
+  createdAt: era.createdAt,
+  updatedAt: era.updatedAt,
+  closedAt: era.closedAt,
+  themes: era.themes.map((theme) => ({
+    id: theme.id,
+    name: theme.name,
+    subtopics: theme.subtopics.map((subtopic) => ({
+      id: subtopic.id,
+      text: subtopic.text,
+      propositions: subtopic.propositions
+        ? subtopic.propositions.map((prop) => ({
+            id: prop.id,
+            type: prop.type,
+            label: prop.label,
+            text: prop.text,
+            audioCount: prop.audios.length,
+          }))
+        : null,
+    })),
+  })),
+})
+
+const prepareThemeForLegacyJson = (theme: StoredEra["themes"][number]) => ({
+  id: theme.id,
+  name: theme.name,
+  subtopics: theme.subtopics.map((subtopic) => ({
+    id: subtopic.id,
+    text: subtopic.text,
+    propositions: subtopic.propositions
+      ? subtopic.propositions.map((prop) => ({
+          id: prop.id,
+          type: prop.type,
+          label: prop.label,
+          text: prop.text,
+        }))
+      : null,
+  })),
+})
+
+export const saveAppStateToFileSystem = async (
+  handle: FileSystemDirectoryHandle,
+  appState: StoredAppState,
+) => {
+  const jsonPayload = {
+    currentEra: prepareEraForJson(appState.currentEra),
+    eraHistory: appState.eraHistory.map(prepareEraForJson),
+  }
+
+  await writeJSONFile(handle, "app-state.json", jsonPayload)
+  await writeJSONFile(
+    handle,
+    "themes.json",
+    appState.currentEra.themes.map(prepareThemeForLegacyJson),
+  )
+
+  const erasToPersist: StoredEra[] = [appState.currentEra, ...appState.eraHistory]
+
+  for (const era of erasToPersist) {
+    for (const theme of era.themes) {
+      for (const subtopic of theme.subtopics) {
+        if (!subtopic.propositions) continue
+        for (let propIndex = 0; propIndex < subtopic.propositions.length; propIndex++) {
+          const prop = subtopic.propositions[propIndex]
+          for (let audioIndex = 0; audioIndex < prop.audios.length; audioIndex++) {
+            const filename = `audio-${era.id}-${subtopic.id}-${propIndex}-${audioIndex}.webm`
+            await writeBlobFile(handle, filename, prop.audios[audioIndex])
+          }
+        }
+      }
+    }
+  }
 }

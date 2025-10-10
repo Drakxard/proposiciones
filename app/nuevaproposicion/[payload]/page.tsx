@@ -12,6 +12,11 @@ import {
   prepareStateForExternalSubtopic,
   upsertExternalSubtopic,
 } from "@/lib/external-subtopics"
+import {
+  getSavedDirectoryHandle,
+  isFileSystemSupported,
+  saveAppStateToFileSystem,
+} from "@/lib/file-system"
 
 type Status = "initializing" | "redirecting" | "error"
 
@@ -70,6 +75,25 @@ const CreateSubtopicPage = () => {
 
         await saveAppState(updated)
         console.log("[nuevaproposicion] Persisted updated state")
+
+        if (isFileSystemSupported()) {
+          try {
+            const handle = await getSavedDirectoryHandle()
+            if (handle) {
+              await saveAppStateToFileSystem(handle, updated)
+              console.log("[nuevaproposicion] Persisted updated state to file system")
+            } else {
+              console.log(
+                "[nuevaproposicion] No file system handle available, skipping file persistence",
+              )
+            }
+          } catch (fileSystemError) {
+            console.warn(
+              "[nuevaproposicion] Could not persist updated state to file system",
+              fileSystemError,
+            )
+          }
+        }
 
         if (!cancelled) {
           setStatus("redirecting")

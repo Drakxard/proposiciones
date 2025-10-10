@@ -40,10 +40,9 @@ import {
   isFileSystemSupported,
   requestDirectoryAccess,
   getSavedDirectoryHandle,
-  writeJSONFile,
   readJSONFile,
-  writeBlobFile,
   readBlobFile,
+  saveAppStateToFileSystem,
 } from "@/lib/file-system"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
@@ -1731,88 +1730,10 @@ export default function PropositionsApp() {
       await saveAppState(appState)
 
       if (useFileSystem && fileSystemHandle) {
-        await saveToFileSystem(fileSystemHandle, appState)
+        await saveAppStateToFileSystem(fileSystemHandle, appState)
       }
     } catch (error) {
       console.error("[v0] Error saving data:", error)
-    }
-  }
-
-  const saveToFileSystem = async (
-    handle: FileSystemDirectoryHandle,
-    appState: StoredAppState,
-  ) => {
-    try {
-      const prepareEraForJson = (era: StoredEra) => ({
-        id: era.id,
-        name: era.name,
-        createdAt: era.createdAt,
-        updatedAt: era.updatedAt,
-        closedAt: era.closedAt,
-        themes: era.themes.map((theme) => ({
-          id: theme.id,
-          name: theme.name,
-          subtopics: theme.subtopics.map((subtopic) => ({
-            id: subtopic.id,
-            text: subtopic.text,
-            propositions: subtopic.propositions
-              ? subtopic.propositions.map((prop) => ({
-                  id: prop.id,
-                  type: prop.type,
-                  label: prop.label,
-                  text: prop.text,
-                  audioCount: prop.audios.length,
-                }))
-              : null,
-          })),
-        })),
-      })
-
-      const jsonPayload = {
-        currentEra: prepareEraForJson(appState.currentEra),
-        eraHistory: appState.eraHistory.map(prepareEraForJson),
-      }
-
-      await writeJSONFile(handle, "app-state.json", jsonPayload)
-      await writeJSONFile(
-        handle,
-        "themes.json",
-        appState.currentEra.themes.map((theme) => ({
-          id: theme.id,
-          name: theme.name,
-          subtopics: theme.subtopics.map((subtopic) => ({
-            id: subtopic.id,
-            text: subtopic.text,
-            propositions: subtopic.propositions
-              ? subtopic.propositions.map((prop) => ({
-                  id: prop.id,
-                  type: prop.type,
-                  label: prop.label,
-                  text: prop.text,
-                }))
-              : null,
-          })),
-        })),
-      )
-
-      const erasToPersist = [appState.currentEra, ...appState.eraHistory]
-
-      for (const era of erasToPersist) {
-        for (const theme of era.themes) {
-          for (const subtopic of theme.subtopics) {
-            if (!subtopic.propositions) continue
-            for (let propIndex = 0; propIndex < subtopic.propositions.length; propIndex++) {
-              const prop = subtopic.propositions[propIndex]
-              for (let audioIndex = 0; audioIndex < prop.audios.length; audioIndex++) {
-                const filename = `audio-${era.id}-${subtopic.id}-${propIndex}-${audioIndex}.webm`
-                await writeBlobFile(handle, filename, prop.audios[audioIndex])
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error("[v0] Error saving to file system:", error)
     }
   }
 
@@ -1823,7 +1744,7 @@ export default function PropositionsApp() {
         setFileSystemHandle(handle)
         setUseFileSystem(true)
         // Save current data to file system
-        await saveToFileSystem(handle, buildStoredAppState())
+        await saveAppStateToFileSystem(handle, buildStoredAppState())
       }
     } catch (error: any) {
       if (error?.message?.includes("Cross origin") || error?.message?.includes("cross-origin")) {
