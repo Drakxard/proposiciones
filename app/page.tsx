@@ -35,7 +35,7 @@ import {
   type StoredEra,
 } from "@/lib/storage"
 import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
-import { ensureStringId } from "@/lib/utils"
+import { ensureStringId, normalizeStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -45,6 +45,7 @@ import {
   writeBlobFile,
   readBlobFile,
 } from "@/lib/file-system"
+import { EXTERNAL_THEME_ID, EXTERNAL_THEME_NAME } from "@/lib/external-subtopics"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 
@@ -89,8 +90,42 @@ interface Era {
 
 const createEraId = () => `era-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
+const createExternalTheme = (): Theme => ({
+  id: EXTERNAL_THEME_ID,
+  name: EXTERNAL_THEME_NAME,
+  subtopics: [],
+})
+
+const ensureExternalTheme = (themes: Theme[]): Theme[] => {
+  let hasExternal = false
+
+  const normalized = themes.map((theme) => {
+    const subtopics = Array.isArray(theme.subtopics) ? theme.subtopics : []
+    if (
+      normalizeStringId(theme.id) === EXTERNAL_THEME_ID ||
+      theme.name?.trim().toLowerCase() === EXTERNAL_THEME_NAME.toLowerCase()
+    ) {
+      hasExternal = true
+      return {
+        ...theme,
+        id: EXTERNAL_THEME_ID,
+        name: EXTERNAL_THEME_NAME,
+        subtopics,
+      }
+    }
+
+    return { ...theme, subtopics }
+  })
+
+  if (!hasExternal) {
+    normalized.push(createExternalTheme())
+  }
+
+  return normalized
+}
+
 const cloneThemes = (themes: Theme[]): Theme[] =>
-  themes.map((theme) => ({
+  ensureExternalTheme(themes).map((theme) => ({
     ...theme,
     subtopics: theme.subtopics.map((subtopic) => ({
       ...subtopic,
@@ -137,7 +172,7 @@ const summarizeEra = (era: Era): EraSummary => {
   }
 }
 
-const DEFAULT_INITIAL_THEMES: Theme[] = [
+const DEFAULT_INITIAL_THEMES: Theme[] = ensureExternalTheme([
   {
     id: "theme-1",
     name: "Tema de ejemplo",
@@ -145,7 +180,7 @@ const DEFAULT_INITIAL_THEMES: Theme[] = [
       { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
     ],
   },
-]
+])
 
 const createBlankEra = (name?: string): Era => {
   const timestamp = Date.now()
@@ -155,7 +190,7 @@ const createBlankEra = (name?: string): Era => {
     createdAt: timestamp,
     updatedAt: timestamp,
     closedAt: null,
-    themes: [],
+    themes: cloneThemes([]),
   }
 }
 
@@ -212,7 +247,7 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
     createdAt,
     updatedAt,
     closedAt: storedEra.closedAt ?? null,
-    themes: (storedEra.themes ?? []).map((theme, themeIndex) => {
+    themes: ensureExternalTheme((storedEra.themes ?? []).map((theme, themeIndex) => {
       const themeId = ensureStringId(theme.id, `${eraId}-theme-${themeIndex}`)
 
       return {
@@ -239,7 +274,7 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
           }
         }),
       }
-    }),
+    })),
   }
 }
 
@@ -406,7 +441,7 @@ export default function PropositionsApp() {
 
     const newEra = createBlankEra(`Nuevo ciclo ${new Date(timestamp).toLocaleDateString()}`)
     setCurrentEra(newEra)
-    setThemes([])
+    setThemes(cloneThemes([]))
     setCurrentThemeId(null)
     setCurrentSubtopicId(null)
     setViewState("themes")

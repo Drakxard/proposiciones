@@ -17,6 +17,51 @@ export type ExternalSubtopicPayload = {
   name: string
 }
 
+const isExternalThemeMatch = (theme: Pick<StoredTheme, "id" | "name">) => {
+  const normalizedId = normalizeStringId(theme.id)
+  if (normalizedId === EXTERNAL_THEME_ID) {
+    return true
+  }
+
+  const normalizedName = theme.name?.trim().toLowerCase()
+  return normalizedName === EXTERNAL_THEME_NAME.toLowerCase()
+}
+
+const createExternalTheme = (subtopics: StoredSubtopic[] = []): StoredTheme => ({
+  id: EXTERNAL_THEME_ID,
+  name: EXTERNAL_THEME_NAME,
+  subtopics,
+})
+
+const normalizeExternalThemeList = (
+  themes: StoredTheme[],
+): { themes: StoredTheme[]; hasExternal: boolean } => {
+  let hasExternal = false
+
+  const normalizedThemes = themes.map((theme) => {
+    const subtopics = Array.isArray(theme.subtopics) ? theme.subtopics : []
+
+    if (isExternalThemeMatch(theme)) {
+      hasExternal = true
+      return createExternalTheme(subtopics)
+    }
+
+    return { ...theme, subtopics }
+  })
+
+  return { themes: normalizedThemes, hasExternal }
+}
+
+const ensureExternalTheme = (themes: StoredTheme[]): StoredTheme[] => {
+  const { themes: normalizedThemes, hasExternal } = normalizeExternalThemeList(themes)
+
+  if (!hasExternal) {
+    normalizedThemes.push(createExternalTheme())
+  }
+
+  return normalizedThemes
+}
+
 export const parseExternalSubtopicPayload = (
   raw: string,
 ): ExternalSubtopicPayload | null => {
@@ -87,7 +132,7 @@ const cloneStoredTheme = (theme: StoredTheme, eraId: string, index: number): Sto
   return {
     ...theme,
     id: themeId,
-    subtopics: theme.subtopics.map((subtopic, subIndex) =>
+    subtopics: (theme.subtopics ?? []).map((subtopic, subIndex) =>
       cloneStoredSubtopic(subtopic, themeId, subIndex),
     ),
   }
@@ -99,7 +144,9 @@ const cloneStoredEra = (era: StoredEra): StoredEra => {
   return {
     ...era,
     id: eraId,
-    themes: era.themes.map((theme, themeIndex) => cloneStoredTheme(theme, eraId, themeIndex)),
+    themes: ensureExternalTheme(
+      (era.themes ?? []).map((theme, themeIndex) => cloneStoredTheme(theme, eraId, themeIndex)),
+    ),
   }
 }
 
@@ -113,7 +160,7 @@ export const createDefaultAppState = (): StoredAppState => {
       createdAt: timestamp,
       updatedAt: timestamp,
       closedAt: null,
-      themes: [],
+      themes: ensureExternalTheme([]),
     },
     eraHistory: [],
   }
@@ -140,7 +187,9 @@ export const upsertExternalSubtopic = (
   const { name } = payload
   const payloadId = ensureStringId(payload.id, payload.id)
 
-  const currentThemes = state.currentEra.themes
+  const { themes: currentThemes } = normalizeExternalThemeList(
+    state.currentEra.themes ?? [],
+  )
   let existingThemeIndex = currentThemes.findIndex(
     (theme) => normalizeStringId(theme.id) === EXTERNAL_THEME_ID,
   )
@@ -148,11 +197,7 @@ export const upsertExternalSubtopic = (
   let updatedThemes: StoredTheme[]
 
   if (existingThemeIndex === -1) {
-    const newTheme: StoredTheme = {
-      id: EXTERNAL_THEME_ID,
-      name: EXTERNAL_THEME_NAME,
-      subtopics: [{ id: payloadId, text: name, propositions: null }],
-    }
+    const newTheme = createExternalTheme([{ id: payloadId, text: name, propositions: null }])
 
     updatedThemes = [...currentThemes, newTheme]
   } else {
@@ -161,7 +206,7 @@ export const upsertExternalSubtopic = (
         return theme
       }
 
-      const subtopics = theme.subtopics.map((subtopic, subIndex) => {
+      const subtopics = (theme.subtopics ?? []).map((subtopic, subIndex) => {
         const normalizedSubtopicId = ensureStringId(
           subtopic.id,
           `${EXTERNAL_THEME_ID}-subtopic-${subIndex}`,
@@ -203,6 +248,7 @@ export const upsertExternalSubtopic = (
       return {
         ...theme,
         id: EXTERNAL_THEME_ID,
+        name: EXTERNAL_THEME_NAME,
         subtopics,
       }
     })
@@ -213,7 +259,7 @@ export const upsertExternalSubtopic = (
     currentEra: {
       ...state.currentEra,
       updatedAt: timestamp,
-      themes: updatedThemes,
+      themes: ensureExternalTheme(updatedThemes),
     },
   }
 }
