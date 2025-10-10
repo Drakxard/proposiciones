@@ -35,6 +35,7 @@ import {
   type StoredEra,
 } from "@/lib/storage"
 import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
+import { ensureStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -203,30 +204,42 @@ const getLabelForProposition = (type: PropositionKind, index: number) => {
 const normalizeStoredEra = (storedEra: StoredEra): Era => {
   const createdAt = storedEra.createdAt ?? Date.now()
   const updatedAt = storedEra.updatedAt ?? createdAt
+  const eraId = ensureStringId(storedEra.id, createEraId())
 
   return {
-    id: storedEra.id ?? createEraId(),
+    id: eraId,
     name: storedEra.name ?? "Ciclo sin nombre",
     createdAt,
     updatedAt,
     closedAt: storedEra.closedAt ?? null,
-    themes: (storedEra.themes ?? []).map((theme, themeIndex) => ({
-      id: theme.id ?? `theme-${themeIndex}`,
-      name: theme.name ?? `Tema ${themeIndex + 1}`,
-      subtopics: (theme.subtopics ?? []).map((subtopic, subIndex) => ({
-        id: subtopic.id ?? `${theme.id ?? `theme-${themeIndex}`}-subtopic-${subIndex}`,
-        text: subtopic.text ?? "",
-        propositions: subtopic.propositions
-          ? subtopic.propositions.map((prop, propIndex) => ({
-              id: prop.id ?? `${subtopic.id ?? `subtopic-${subIndex}`}-${propIndex}`,
-              type: (prop.type ?? "custom") as PropositionKind,
-              label: prop.label ?? `Proposición ${propIndex + 1}`,
-              text: prop.text ?? "",
-              audios: prop.audios ? [...prop.audios] : [],
-            }))
-          : null,
-      })),
-    })),
+    themes: (storedEra.themes ?? []).map((theme, themeIndex) => {
+      const themeId = ensureStringId(theme.id, `${eraId}-theme-${themeIndex}`)
+
+      return {
+        id: themeId,
+        name: theme.name ?? `Tema ${themeIndex + 1}`,
+        subtopics: (theme.subtopics ?? []).map((subtopic, subIndex) => {
+          const subtopicId = ensureStringId(
+            subtopic.id,
+            `${themeId}-subtopic-${subIndex}`,
+          )
+
+          return {
+            id: subtopicId,
+            text: subtopic.text ?? "",
+            propositions: subtopic.propositions
+              ? subtopic.propositions.map((prop, propIndex) => ({
+                  id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
+                  type: (prop.type ?? "custom") as PropositionKind,
+                  label: prop.label ?? `Proposición ${propIndex + 1}`,
+                  text: prop.text ?? "",
+                  audios: prop.audios ? [...prop.audios] : [],
+                }))
+              : null,
+          }
+        }),
+      }
+    }),
   }
 }
 
@@ -1313,20 +1326,25 @@ export default function PropositionsApp() {
 
         const legacySubtopicsWithAudios: Subtopic[] = await Promise.all(
           legacySubtopics.map(async (subtopic: any, subtopicIndex: number) => {
+            const fallbackSubtopicId = `legacy-${subtopicIndex}`
+            const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
+
             if (!subtopic.propositions) {
               return {
-                id: subtopic.id ?? `legacy-${subtopicIndex}`,
+                id: subtopicId,
                 text: subtopic.text ?? "",
                 propositions: null,
               }
             }
 
-            const audiosGrouped = await loadAudios(subtopic.id)
+            const audiosGrouped = await loadAudios(subtopicId)
             const propositionsWithAudios: Proposition[] = subtopic.propositions.map(
               (prop: any, propIndex: number) => {
                 const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
+                const fallbackPropId = `${subtopicId}-${propIndex}`
+
                 return {
-                  id: prop.id ?? `${subtopic.id}-${propIndex}`,
+                  id: ensureStringId(prop.id, fallbackPropId),
                   type,
                   label: prop.label ?? getLabelForProposition(type, propIndex),
                   text: prop.text ?? "",
@@ -1336,7 +1354,7 @@ export default function PropositionsApp() {
             )
 
             return {
-              id: subtopic.id ?? `legacy-${subtopicIndex}`,
+              id: subtopicId,
               text: subtopic.text ?? "",
               propositions: propositionsWithAudios,
             }
@@ -1353,22 +1371,30 @@ export default function PropositionsApp() {
       } else {
         migratedThemes = await Promise.all(
           loadedThemes.map(async (theme: any, themeIndex: number) => {
+            const fallbackThemeId = `theme-${themeIndex}`
+            const themeId = ensureStringId(theme.id, fallbackThemeId)
+
             const subtopicsWithAudios: Subtopic[] = await Promise.all(
               (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
+                const fallbackSubtopicId = `${themeId}-subtopic-${subtopicIndex}`
+                const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
+
                 if (!subtopic.propositions) {
                   return {
-                    id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
+                    id: subtopicId,
                     text: subtopic.text ?? "",
                     propositions: null,
                   }
                 }
 
-                const audiosGrouped = await loadAudios(subtopic.id)
+                const audiosGrouped = await loadAudios(subtopicId)
                 const propositionsWithAudios: Proposition[] = subtopic.propositions.map(
                   (prop: any, propIndex: number) => {
                     const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
+                    const fallbackPropId = `${subtopicId}-${propIndex}`
+
                     return {
-                      id: prop.id ?? `${subtopic.id}-${propIndex}`,
+                      id: ensureStringId(prop.id, fallbackPropId),
                       type,
                       label: prop.label ?? getLabelForProposition(type, propIndex),
                       text: prop.text ?? "",
@@ -1378,7 +1404,7 @@ export default function PropositionsApp() {
                 )
 
                 return {
-                  id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
+                  id: subtopicId,
                   text: subtopic.text ?? "",
                   propositions: propositionsWithAudios,
                 }
@@ -1386,7 +1412,7 @@ export default function PropositionsApp() {
             )
 
             return {
-              id: theme.id ?? `theme-${themeIndex}`,
+              id: themeId,
               name: theme.name ?? `Tema ${themeIndex + 1}`,
               subtopics: subtopicsWithAudios,
             }
@@ -1441,15 +1467,18 @@ export default function PropositionsApp() {
       }
 
       const hydrateEra = async (rawEra: any, fallbackName: string, index: number): Promise<StoredEra> => {
-        const eraId = rawEra?.id ?? createEraId()
+        const eraId = ensureStringId(rawEra?.id, createEraId())
         const createdAt = rawEra?.createdAt ?? Date.now()
         const updatedAt = rawEra?.updatedAt ?? createdAt
         const themes = await Promise.all(
           ((rawEra?.themes as any[]) ?? []).map(async (theme, themeIndex) => {
-            const themeId = theme?.id ?? `${eraId}-theme-${themeIndex}`
+            const themeId = ensureStringId(theme?.id, `${eraId}-theme-${themeIndex}`)
             const subtopics = await Promise.all(
               ((theme?.subtopics as any[]) ?? []).map(async (subtopic, subIndex) => {
-                const subtopicId = subtopic?.id ?? `${themeId}-subtopic-${subIndex}`
+                const subtopicId = ensureStringId(
+                  subtopic?.id,
+                  `${themeId}-subtopic-${subIndex}`,
+                )
                 const propositionsRaw = subtopic?.propositions as any[] | null
 
                 if (!propositionsRaw) {
@@ -1485,7 +1514,7 @@ export default function PropositionsApp() {
                     const type = (prop?.type ?? "custom") as PropositionKind
 
                     return {
-                      id: prop?.id ?? `${subtopicId}-${propIndex}`,
+                      id: ensureStringId(prop?.id, `${subtopicId}-${propIndex}`),
                       type,
                       label: prop?.label ?? getLabelForProposition(type, propIndex),
                       text: prop?.text ?? "",
@@ -1549,9 +1578,12 @@ export default function PropositionsApp() {
       if (firstTheme && !("name" in firstTheme)) {
         const legacySubtopicsWithAudios: Subtopic[] = await Promise.all(
           legacyData.map(async (subtopic: any, subtopicIndex: number) => {
+            const fallbackSubtopicId = `legacy-${subtopicIndex}`
+            const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
+
             if (!subtopic.propositions) {
               return {
-                id: subtopic.id ?? `legacy-${subtopicIndex}`,
+                id: subtopicId,
                 text: subtopic.text ?? "",
                 propositions: null,
               }
@@ -1563,7 +1595,7 @@ export default function PropositionsApp() {
                 let audioIndex = 0
 
                 while (true) {
-                  const filename = `audio-${subtopic.id}-${propIndex}-${audioIndex}.webm`
+                  const filename = `audio-${subtopicId}-${propIndex}-${audioIndex}.webm`
                   const blob = await readBlobFile(handle, filename)
                   if (!blob) break
                   audios.push(blob)
@@ -1571,9 +1603,10 @@ export default function PropositionsApp() {
                 }
 
                 const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
+                const fallbackPropId = `${subtopicId}-${propIndex}`
 
                 return {
-                  id: prop.id ?? `${subtopic.id}-${propIndex}`,
+                  id: ensureStringId(prop.id, fallbackPropId),
                   type,
                   label: prop.label ?? getLabelForProposition(type, propIndex),
                   text: prop.text ?? "",
@@ -1583,7 +1616,7 @@ export default function PropositionsApp() {
             )
 
             return {
-              id: subtopic.id ?? `legacy-${subtopicIndex}`,
+              id: subtopicId,
               text: subtopic.text ?? "",
               propositions: propositionsWithAudios,
             }
@@ -1611,11 +1644,17 @@ export default function PropositionsApp() {
 
       const themesWithAudios: Theme[] = await Promise.all(
         legacyData.map(async (theme: any, themeIndex: number) => {
+          const fallbackThemeId = `theme-${themeIndex}`
+          const themeId = ensureStringId(theme.id, fallbackThemeId)
+
           const subtopicsWithAudios: Subtopic[] = await Promise.all(
             (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
+              const fallbackSubtopicId = `${themeId}-subtopic-${subtopicIndex}`
+              const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
+
               if (!subtopic.propositions) {
                 return {
-                  id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
+                  id: subtopicId,
                   text: subtopic.text ?? "",
                   propositions: null,
                 }
@@ -1627,7 +1666,7 @@ export default function PropositionsApp() {
                   let audioIndex = 0
 
                   while (true) {
-                    const filename = `audio-${subtopic.id}-${propIndex}-${audioIndex}.webm`
+                    const filename = `audio-${subtopicId}-${propIndex}-${audioIndex}.webm`
                     const blob = await readBlobFile(handle, filename)
                     if (!blob) break
                     audios.push(blob)
@@ -1635,9 +1674,10 @@ export default function PropositionsApp() {
                   }
 
                   const type = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
+                  const fallbackPropId = `${subtopicId}-${propIndex}`
 
                   return {
-                    id: prop.id ?? `${subtopic.id}-${propIndex}`,
+                    id: ensureStringId(prop.id, fallbackPropId),
                     type,
                     label: prop.label ?? getLabelForProposition(type, propIndex),
                     text: prop.text ?? "",
@@ -1647,7 +1687,7 @@ export default function PropositionsApp() {
               )
 
               return {
-                id: subtopic.id ?? `${theme.id ?? themeIndex}-subtopic-${subtopicIndex}`,
+                id: subtopicId,
                 text: subtopic.text ?? "",
                 propositions: propositionsWithAudios,
               }
@@ -1655,7 +1695,7 @@ export default function PropositionsApp() {
           )
 
           return {
-            id: theme.id ?? `theme-${themeIndex}`,
+            id: themeId,
             name: theme.name ?? `Tema ${themeIndex + 1}`,
             subtopics: subtopicsWithAudios,
           }
