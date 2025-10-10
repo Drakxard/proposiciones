@@ -207,6 +207,29 @@ const getLabelForProposition = (type: PropositionKind, index: number) => {
   return `Proposición ${index + 1}`
 }
 
+const buildPropositionNavigationOrder = (propositions: Proposition[]): number[] => {
+  if (!propositions.length) {
+    return []
+  }
+
+  const standardBuckets: number[][] = STANDARD_PROPOSITION_TYPES.map(() => [])
+  const additionalIndices: number[] = []
+
+  propositions.forEach((proposition, index) => {
+    const typeIndex = STANDARD_PROPOSITION_TYPES.indexOf(
+      proposition.type as PropositionType,
+    )
+
+    if (typeIndex >= 0) {
+      standardBuckets[typeIndex].push(index)
+    } else {
+      additionalIndices.push(index)
+    }
+  })
+
+  return [...standardBuckets.flat(), ...additionalIndices]
+}
+
 const normalizeStoredEra = (storedEra: StoredEra): Era => {
   const createdAt = storedEra.createdAt ?? Date.now()
   const updatedAt = storedEra.updatedAt ?? createdAt
@@ -499,6 +522,10 @@ export default function PropositionsApp() {
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
   const propositions = currentSubtopic?.propositions || []
+  const propositionNavigationOrder = useMemo(
+    () => buildPropositionNavigationOrder(propositions),
+    [propositions],
+  )
   const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
   const hasContentAtIndex = useCallback(
     (index: number) => {
@@ -1228,9 +1255,52 @@ export default function PropositionsApp() {
       }
 
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const isArrowLeft = e.key === "ArrowLeft"
+
         if (isPracticeView) {
           e.preventDefault()
-          handleNavigateProposition(e.key === "ArrowLeft" ? "previous" : "next")
+          handleNavigateProposition(isArrowLeft ? "previous" : "next")
+          return
+        }
+
+        if (viewState === "overview" && focusedItem?.scope === "proposition") {
+          e.preventDefault()
+          const currentIndex = propositions.findIndex(
+            (prop) => prop.id === focusedItem.id,
+          )
+
+          if (currentIndex === -1) {
+            return
+          }
+
+          const currentPosition = propositionNavigationOrder.indexOf(currentIndex)
+          if (currentPosition === -1) {
+            return
+          }
+
+          const nextPosition = currentPosition + (isArrowLeft ? -1 : 1)
+
+          if (
+            nextPosition < 0 ||
+            nextPosition >= propositionNavigationOrder.length
+          ) {
+            return
+          }
+
+          const nextIndex = propositionNavigationOrder[nextPosition]
+          const nextProposition = propositions[nextIndex]
+
+          if (!nextProposition) {
+            return
+          }
+
+          setFocusedItem({ scope: "proposition", id: nextProposition.id })
+
+          const nextElement = document.querySelector<HTMLElement>(
+            `[data-proposition-id="${nextProposition.id}"]`,
+          )
+
+          nextElement?.focus()
         }
         return
       }
@@ -1260,7 +1330,7 @@ export default function PropositionsApp() {
     return () => window.removeEventListener("keydown", handleKeyPress)
   }, [
     viewState,
-    propositions.length,
+    propositions,
     mediaRecorder,
     focusedItem,
     currentThemeId,
@@ -1268,6 +1338,7 @@ export default function PropositionsApp() {
     isPracticeView,
     handleNavigateProposition,
     findNextFilledIndex,
+    propositionNavigationOrder,
   ])
 
   useEffect(() => {
@@ -2687,6 +2758,7 @@ export default function PropositionsApp() {
                   return (
                     <div
                       key={prop.id}
+                      data-proposition-id={prop.id}
                       className={`p-6 rounded-lg transition-colors space-y-4 ${
                         isSelected ? "bg-primary/10" : "hover:bg-muted/50"
                       }`}
