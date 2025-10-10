@@ -70,14 +70,20 @@ interface Theme {
   name: string
   subtopics: Subtopic[]
 }
-type ViewState = 
-  | "themes" 
-  | "subtopics" 
-  | "overview" 
-  | "recording" 
-  | "listening" 
-  | "countdown" 
+type ViewState =
+  | "themes"
+  | "subtopics"
+  | "overview"
+  | "recording"
+  | "listening"
+  | "countdown"
   | "prompt"
+
+type FocusedItem =
+  | { scope: "theme"; id: string }
+  | { scope: "subtopic"; id: string }
+  | { scope: "proposition"; id: string }
+  | null
 
 interface Era {
   id: string
@@ -285,12 +291,20 @@ export default function PropositionsApp() {
   const [isRecording, setIsRecording] = useState(false)
   const [countdown, setCountdown] = useState(5)
   const [showRelaxAnimation, setShowRelaxAnimation] = useState(false)
-  const [focusedItem, setFocusedItem] = useState<
-    | { scope: "theme"; id: string }
-    | { scope: "subtopic"; id: string }
-    | { scope: "proposition"; id: string }
-    | null
-  >(null)
+  const [focusedItem, setFocusedItem] = useState<FocusedItem>(null)
+  const setFocusedItemSafe = useCallback((next: FocusedItem) => {
+    setFocusedItem((prev) => {
+      if (prev === null && next === null) {
+        return prev
+      }
+
+      if (prev && next && prev.scope === next.scope && prev.id === next.id) {
+        return prev
+      }
+
+      return next
+    })
+  }, [])
   const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
   const [pendingExternalNavigation, setPendingExternalNavigation] = useState<
     { eraId: string; themeId: string; subtopicId: string; title?: string } | null
@@ -420,7 +434,7 @@ export default function PropositionsApp() {
     setCurrentSubtopicId(null)
     setViewState("themes")
     setPendingPracticeIndex(null)
-    setFocusedItem(null)
+    setFocusedItemSafe(null)
     setRewritePreview(null)
     setCurrentIndex(0)
     setIsRecording(false)
@@ -456,7 +470,7 @@ export default function PropositionsApp() {
     setCurrentThemeId(null)
     setCurrentSubtopicId(null)
     setPendingPracticeIndex(null)
-    setFocusedItem(null)
+    setFocusedItemSafe(null)
     setRewritePreview(null)
     setCurrentIndex(0)
     setIsRecording(false)
@@ -508,29 +522,53 @@ export default function PropositionsApp() {
     [propositions],
   )
   const findNextFilledIndex = useCallback(
-    (fromIndex: number) => {
-      for (let i = fromIndex + 1; i < propositions.length; i += 1) {
+    (fromIndex: number, options?: { wrap?: boolean }) => {
+      const { wrap = false } = options ?? {}
+      const total = propositions.length
+
+      for (let i = fromIndex + 1; i < total; i += 1) {
         if (hasContentAtIndex(i)) {
           return i
         }
       }
+
+      if (wrap && total > 0) {
+        for (let i = 0; i < total && i <= fromIndex; i += 1) {
+          if (i !== fromIndex && hasContentAtIndex(i)) {
+            return i
+          }
+        }
+      }
+
       return -1
     },
     [hasContentAtIndex, propositions.length],
   )
   const findPreviousFilledIndex = useCallback(
-    (fromIndex: number) => {
+    (fromIndex: number, options?: { wrap?: boolean }) => {
+      const { wrap = false } = options ?? {}
+      const total = propositions.length
+
       for (let i = fromIndex - 1; i >= 0; i -= 1) {
         if (hasContentAtIndex(i)) {
           return i
         }
       }
+
+      if (wrap && total > 0) {
+        for (let i = total - 1; i >= 0; i -= 1) {
+          if (i !== fromIndex && hasContentAtIndex(i)) {
+            return i
+          }
+        }
+      }
+
       return -1
     },
-    [hasContentAtIndex],
+    [hasContentAtIndex, propositions.length],
   )
-  const canGoToPrevious = findPreviousFilledIndex(currentIndex) !== -1
-  const canGoToNext = findNextFilledIndex(currentIndex) !== -1
+  const canGoToPrevious = findPreviousFilledIndex(currentIndex, { wrap: true }) !== -1
+  const canGoToNext = findNextFilledIndex(currentIndex, { wrap: true }) !== -1
   const isNavigationLocked = isRecording || viewState === "countdown"
   const isVariantGenerationActive = generatingVariantId !== null
   const isGenerationBusy = generatingVariantId !== null || generatingPropositionId !== null
@@ -934,7 +972,7 @@ export default function PropositionsApp() {
       setViewState("themes")
     }
     if (focusedItem?.scope === "theme" && focusedItem.id === themeId) {
-      setFocusedItem(null)
+      setFocusedItemSafe(null)
     }
   }
 
@@ -956,7 +994,7 @@ export default function PropositionsApp() {
     }
 
     if (focusedItem?.scope === "subtopic" && focusedItem.id === subtopicId) {
-      setFocusedItem(null)
+      setFocusedItemSafe(null)
     }
   }
 
@@ -1000,7 +1038,7 @@ export default function PropositionsApp() {
     }
 
     if (focusedItem?.scope === "proposition" && focusedItem.id === propositionId) {
-      setFocusedItem(null)
+      setFocusedItemSafe(null)
     }
   }
 
@@ -1160,12 +1198,19 @@ export default function PropositionsApp() {
         return
       }
 
-      const targetIndex =
+      let targetIndex =
         direction === "previous"
           ? findPreviousFilledIndex(currentIndex)
           : findNextFilledIndex(currentIndex)
 
       if (targetIndex === -1) {
+        targetIndex =
+          direction === "previous"
+            ? findPreviousFilledIndex(currentIndex, { wrap: true })
+            : findNextFilledIndex(currentIndex, { wrap: true })
+      }
+
+      if (targetIndex === -1 || targetIndex === currentIndex) {
         return
       }
 
@@ -1271,7 +1316,7 @@ export default function PropositionsApp() {
   ])
 
   useEffect(() => {
-    setFocusedItem(null)
+    setFocusedItemSafe(null)
   }, [viewState])
 
   useEffect(() => {
@@ -2479,8 +2524,8 @@ export default function PropositionsApp() {
                   <div
                     key={theme.id}
                     onClick={() => openTheme(theme.id)}
-                    onMouseEnter={() => setFocusedItem({ scope: "theme", id: theme.id })}
-                    onFocus={() => setFocusedItem({ scope: "theme", id: theme.id })}
+                    onMouseEnter={() => setFocusedItemSafe({ scope: "theme", id: theme.id })}
+                    onFocus={() => setFocusedItemSafe({ scope: "theme", id: theme.id })}
                     tabIndex={0}
                     className={`flex items-center gap-4 p-4 rounded-lg border transition cursor-pointer focus:outline-none ${
                       isSelected
@@ -2567,8 +2612,8 @@ export default function PropositionsApp() {
                     className={`flex items-center gap-4 rounded-lg p-2 transition ${
                       isSelected ? "bg-primary/10" : "hover:bg-muted/40"
                     }`}
-                    onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                    onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                    onMouseEnter={() => setFocusedItemSafe({ scope: "subtopic", id: subtopic.id })}
+                    onFocus={() => setFocusedItemSafe({ scope: "subtopic", id: subtopic.id })}
                     tabIndex={0}
                   >
                     <div className="flex-1 space-y-1">
@@ -2581,7 +2626,7 @@ export default function PropositionsApp() {
                         type="text"
                         value={subtopic.text}
                         onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                        onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                        onFocus={() => setFocusedItemSafe({ scope: "subtopic", id: subtopic.id })}
                         placeholder={
                           subtopic.title?.trim()
                             ? `Condición para "${subtopic.title}"`
@@ -2690,8 +2735,8 @@ export default function PropositionsApp() {
                       className={`p-6 rounded-lg transition-colors space-y-4 ${
                         isSelected ? "bg-primary/10" : "hover:bg-muted/50"
                       }`}
-                      onMouseEnter={() => setFocusedItem({ scope: "proposition", id: prop.id })}
-                      onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                      onMouseEnter={() => setFocusedItemSafe({ scope: "proposition", id: prop.id })}
+                      onFocus={() => setFocusedItemSafe({ scope: "proposition", id: prop.id })}
                       tabIndex={0}
                     >
                     <div className="flex items-start justify-between gap-6">
