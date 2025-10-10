@@ -18,11 +18,14 @@ import {
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
 import { SubtopicImportModal, type SubtopicImportPayload } from "@/components/subtopic-import-modal"
+import { generatePropositionVariant, rewriteProposition } from "./actions"
 import {
-  generatePropositionVariant,
-  rewriteProposition,
+  DEFAULT_VARIANT_INSTRUCTIONS,
+  GROQ_MODEL_STORAGE_KEY,
+  GROQ_SYSTEM_PROMPT_STORAGE_KEY,
+  GROQ_VARIANT_PROMPTS_STORAGE_KEY,
   type PropositionVariant,
-} from "./actions"
+} from "@/lib/groq-config"
 import {
   loadThemes,
   loadAudios,
@@ -167,6 +170,57 @@ const STANDARD_PROPOSITION_TYPES: PropositionType[] = [
   "inverso",
   "contrareciproco",
 ]
+
+const VARIANT_PROMPT_KEYS: PropositionVariant[] = [
+  "reciproco",
+  "inverso",
+  "contrareciproco",
+]
+
+const createDefaultVariantPrompts = (): Record<PropositionVariant, string> => ({
+  ...DEFAULT_VARIANT_INSTRUCTIONS,
+})
+
+const parseVariantPrompts = (raw: string | null): Record<PropositionVariant, string> => {
+  const prompts = createDefaultVariantPrompts()
+
+  if (!raw) {
+    return prompts
+  }
+
+  try {
+    const stored = JSON.parse(raw)
+    for (const key of VARIANT_PROMPT_KEYS) {
+      const value = stored?.[key]
+      if (typeof value === "string") {
+        prompts[key] = value
+      }
+    }
+  } catch (error) {
+    console.warn("[v0] No se pudieron leer los prompts personalizados de Groq:", error)
+  }
+
+  return prompts
+}
+
+const buildVariantInstruction = (
+  template: string,
+  condition: string,
+  currentText: string,
+  variant: PropositionVariant,
+) => {
+  const baseTemplate = template?.trim().length
+    ? template
+    : DEFAULT_VARIANT_INSTRUCTIONS[variant]
+  const label =
+    propositionTypeLabels[variant as PropositionType] ??
+    variant.replace(/^[a-z]/, (char) => char.toUpperCase())
+
+  return baseTemplate
+    .replaceAll("{{condicion}}", condition)
+    .replaceAll("{{proposicion_actual}}", currentText)
+    .replaceAll("{{tipo}}", label)
+}
 
 const mapIndexToType = (index: number): PropositionKind => {
   switch (index) {
@@ -485,22 +539,38 @@ export default function PropositionsApp() {
     })
   }
 
-  const getGroqSettings = (): { model?: string; systemPrompt?: string } => {
+  const getGroqSettings = (): {
+    model?: string
+    systemPrompt?: string
+    variantPrompts: Record<PropositionVariant, string>
+  } => {
     if (typeof window === "undefined") {
-      return { model: undefined, systemPrompt: undefined }
+      return {
+        model: undefined,
+        systemPrompt: undefined,
+        variantPrompts: createDefaultVariantPrompts(),
+      }
     }
 
     try {
-      const storedModel = window.localStorage.getItem("groq_model")
-      const storedPrompt = window.localStorage.getItem("groq_prompt")
+      const storedModel = window.localStorage.getItem(GROQ_MODEL_STORAGE_KEY)
+      const storedPrompt = window.localStorage.getItem(GROQ_SYSTEM_PROMPT_STORAGE_KEY)
+      const storedVariantPrompts = parseVariantPrompts(
+        window.localStorage.getItem(GROQ_VARIANT_PROMPTS_STORAGE_KEY),
+      )
 
       return {
         model: storedModel ?? undefined,
         systemPrompt: storedPrompt ?? undefined,
+        variantPrompts: storedVariantPrompts,
       }
     } catch (error) {
       console.warn("[v0] No se pudieron leer los ajustes de Groq:", error)
-      return { model: undefined, systemPrompt: undefined }
+      return {
+        model: undefined,
+        systemPrompt: undefined,
+        variantPrompts: createDefaultVariantPrompts(),
+      }
     }
   }
 
@@ -518,15 +588,23 @@ export default function PropositionsApp() {
       return
     }
 
-    const { model, systemPrompt } = getGroqSettings()
+    const { model, systemPrompt, variantPrompts } = getGroqSettings()
+    const variantType = proposition.type as PropositionVariant
+    const instruction = buildVariantInstruction(
+      variantPrompts[variantType],
+      currentSubtopic.text,
+      proposition.text,
+      variantType,
+    )
     setGeneratingVariantId(proposition.id)
 
     try {
       const result = await generatePropositionVariant(
         currentSubtopic.text,
-        proposition.type as PropositionVariant,
+        variantType,
         model,
         systemPrompt,
+        instruction,
       )
 
       if ("error" in result) {
@@ -1899,15 +1977,23 @@ export default function PropositionsApp() {
 
     setGeneratingPropositionId(propositionId)
     try {
-      const { model, systemPrompt } = getGroqSettings()
+      const { model, systemPrompt, variantPrompts } = getGroqSettings()
 
       const variants: { type: PropositionVariant; text: string }[] = []
-      for (const variant of [
-        "reciproco",
-        "inverso",
-        "contrareciproco",
-      ] as PropositionVariant[]) {
-        const result = await generatePropositionVariant(proposition.text, variant, model, systemPrompt)
+      for (const variant of VARIANT_PROMPT_KEYS) {
+        const instruction = buildVariantInstruction(
+          variantPrompts[variant],
+          proposition.text,
+          "",
+          variant,
+        )
+        const result = await generatePropositionVariant(
+          proposition.text,
+          variant,
+          model,
+          systemPrompt,
+          instruction,
+        )
 
         if ("error" in result) {
           throw new Error(result.error)
@@ -1963,6 +2049,44 @@ export default function PropositionsApp() {
       return
     }
 
+    const settings = getGroqSettings()
+
+    if (target.type !== "custom" && target.type !== "condicion") {
+      const variantType = target.type as PropositionVariant
+      const instruction = buildVariantInstruction(
+        settings.variantPrompts[variantType],
+        currentSubtopic.text,
+        target.text,
+        variantType,
+      )
+
+      setRewritePreview(null)
+      setRewritingPropositionId(target.id)
+
+      try {
+        const result = await generatePropositionVariant(
+          currentSubtopic.text,
+          variantType,
+          settings.model,
+          settings.systemPrompt,
+          instruction,
+        )
+
+        if ("error" in result) {
+          throw new Error(result.error)
+        }
+
+        setRewritePreview({ propositionId: target.id, text: result.text })
+      } catch (error) {
+        console.error("[v0] Error rewriting proposition:", error)
+        alert("Error al rehacer la proposición. Intenta nuevamente.")
+      } finally {
+        setRewritingPropositionId(null)
+      }
+
+      return
+    }
+
     if (typeof window === "undefined") {
       return
     }
@@ -1973,7 +2097,7 @@ export default function PropositionsApp() {
         ? propositionTypeLabels[target.type as PropositionType]
         : target.label
 
-    const defaultPrompt = `Condicion: ${conditionText}, quiero que hagas el ${typeLabel}`
+    const defaultPrompt = `Condición: ${conditionText}, quiero que hagas el ${typeLabel}`
     const userPrompt = window.prompt(
       "Escribe cómo quieres rehacer la proposición:",
       defaultPrompt,
@@ -1987,7 +2111,7 @@ export default function PropositionsApp() {
     setRewritingPropositionId(target.id)
 
     try {
-      const result = await rewriteProposition(userPrompt)
+      const result = await rewriteProposition(userPrompt, settings.model)
 
       if ("error" in result) {
         throw new Error(result.error)

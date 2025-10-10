@@ -7,25 +7,56 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getAvailableModels } from "@/app/actions"
+import {
+  DEFAULT_GROQ_MODEL,
+  DEFAULT_SYSTEM_PROMPT,
+  DEFAULT_VARIANT_INSTRUCTIONS,
+  GROQ_MODEL_STORAGE_KEY,
+  GROQ_SYSTEM_PROMPT_STORAGE_KEY,
+  GROQ_VARIANT_PROMPTS_STORAGE_KEY,
+  VARIANT_LABELS,
+  type PropositionVariant,
+} from "@/lib/groq-config"
 
 interface SettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después.
+const VARIANT_KEYS: PropositionVariant[] = ["reciproco", "inverso", "contrareciproco"]
 
-Recibirás una condición base y el tipo de proposición a generar (recíproco, inverso o contra-recíproco). Debes devolver únicamente la proposición solicitada.
+const createDefaultVariantPrompts = (): Record<PropositionVariant, string> => ({
+  ...DEFAULT_VARIANT_INSTRUCTIONS,
+})
 
-Formato de salida (SOLO JSON, sin explicaciones):
-{
-  "proposicion": "texto de la proposición solicitada"
-}`
+const parseStoredVariantPrompts = (raw: string | null) => {
+  const parsedPrompts = createDefaultVariantPrompts()
+
+  if (!raw) {
+    return parsedPrompts
+  }
+
+  try {
+    const stored = JSON.parse(raw)
+    for (const key of VARIANT_KEYS) {
+      const value = stored?.[key]
+      if (typeof value === "string") {
+        parsedPrompts[key] = value
+      }
+    }
+  } catch (error) {
+    console.error("[v0] Error parsing stored Groq variant prompts:", error)
+  }
+
+  return parsedPrompts
+}
 
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
-  const [model, setModel] = useState(DEFAULT_MODEL)
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
+  const [model, setModel] = useState(DEFAULT_GROQ_MODEL)
+  const [prompt, setPrompt] = useState(DEFAULT_SYSTEM_PROMPT)
+  const [variantPrompts, setVariantPrompts] = useState<Record<PropositionVariant, string>>(
+    () => createDefaultVariantPrompts(),
+  )
   const [availableModels, setAvailableModels] = useState<string[]>([])
 
   useEffect(() => {
@@ -33,10 +64,14 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       return
     }
 
-    const savedModel = localStorage.getItem("groq_model") || DEFAULT_MODEL
-    const savedPrompt = localStorage.getItem("groq_prompt") || DEFAULT_PROMPT
+    const savedModel = localStorage.getItem(GROQ_MODEL_STORAGE_KEY) || DEFAULT_GROQ_MODEL
+    const savedPrompt = localStorage.getItem(GROQ_SYSTEM_PROMPT_STORAGE_KEY) || DEFAULT_SYSTEM_PROMPT
+    const savedVariantPrompts = parseStoredVariantPrompts(
+      localStorage.getItem(GROQ_VARIANT_PROMPTS_STORAGE_KEY),
+    )
     setModel(savedModel)
     setPrompt(savedPrompt)
+    setVariantPrompts(savedVariantPrompts)
 
     let isActive = true
 
@@ -45,7 +80,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         const models = await getAvailableModels()
         if (!isActive) return
 
-        const normalized = Array.from(new Set(models.length ? models : [DEFAULT_MODEL]))
+        const normalized = Array.from(new Set(models.length ? models : [DEFAULT_GROQ_MODEL]))
 
         if (!normalized.includes(savedModel)) {
           normalized.unshift(savedModel)
@@ -55,7 +90,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       } catch (error) {
         console.error("[v0] Error loading Groq models:", error)
         if (!isActive) return
-        setAvailableModels((prev) => (prev.length ? prev : [DEFAULT_MODEL]))
+        setAvailableModels((prev) => (prev.length ? prev : [DEFAULT_GROQ_MODEL]))
       }
     }
 
@@ -67,16 +102,22 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   }, [open])
 
   const handleSave = () => {
-    localStorage.setItem("groq_model", model)
-    localStorage.setItem("groq_prompt", prompt)
+    localStorage.setItem(GROQ_MODEL_STORAGE_KEY, model)
+    localStorage.setItem(GROQ_SYSTEM_PROMPT_STORAGE_KEY, prompt)
+    localStorage.setItem(
+      GROQ_VARIANT_PROMPTS_STORAGE_KEY,
+      JSON.stringify(variantPrompts),
+    )
     onOpenChange(false)
   }
 
   const handleReset = () => {
-    setModel(DEFAULT_MODEL)
-    setPrompt(DEFAULT_PROMPT)
-    localStorage.removeItem("groq_model")
-    localStorage.removeItem("groq_prompt")
+    setModel(DEFAULT_GROQ_MODEL)
+    setPrompt(DEFAULT_SYSTEM_PROMPT)
+    setVariantPrompts(createDefaultVariantPrompts())
+    localStorage.removeItem(GROQ_MODEL_STORAGE_KEY)
+    localStorage.removeItem(GROQ_SYSTEM_PROMPT_STORAGE_KEY)
+    localStorage.removeItem(GROQ_VARIANT_PROMPTS_STORAGE_KEY)
   }
 
   return (
@@ -100,7 +141,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                   </SelectItem>
                 ))}
                 {availableModels.length === 0 && (
-                  <SelectItem value={DEFAULT_MODEL}>{DEFAULT_MODEL}</SelectItem>
+                  <SelectItem value={DEFAULT_GROQ_MODEL}>{DEFAULT_GROQ_MODEL}</SelectItem>
                 )}
               </SelectContent>
             </Select>
@@ -119,6 +160,48 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             <p className="text-sm text-muted-foreground">
               Este prompt se enviará a Groq junto con la condición ingresada
             </p>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <Label>Prompts por tipo de proposición</Label>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Personaliza el mensaje que se enviará para cada tipo. Puedes usar las variables
+                <code className="mx-1 rounded bg-muted px-1 py-0.5">{"{{condicion}}"}</code>,
+                <code className="mx-1 rounded bg-muted px-1 py-0.5">{"{{proposicion_actual}}"}</code>
+                y <code className="mx-1 rounded bg-muted px-1 py-0.5">{"{{tipo}}"}</code> para insertar
+                la condición original, el texto actual y el nombre del tipo respectivamente.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {VARIANT_KEYS.map((key) => {
+                const variantLabel = VARIANT_LABELS[key]
+                const capitalizedLabel = variantLabel
+                  ? `${variantLabel.charAt(0).toUpperCase()}${variantLabel.slice(1)}`
+                  : key
+
+                return (
+                  <div key={key} className="space-y-2">
+                    <Label htmlFor={`variant-prompt-${key}`}>
+                      Prompt para {capitalizedLabel}
+                    </Label>
+                    <Textarea
+                      id={`variant-prompt-${key}`}
+                      value={variantPrompts[key]}
+                      onChange={(event) =>
+                        setVariantPrompts((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }))
+                      }
+                      rows={4}
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
           <div className="flex gap-3 justify-end">

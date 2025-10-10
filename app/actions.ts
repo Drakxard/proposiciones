@@ -1,37 +1,19 @@
 "use server"
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
-const DEFAULT_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después.
-
-Recibirás una condición base y el tipo de proposición a generar (recíproco, inverso o contra-recíproco). Debes devolver únicamente la proposición solicitada.
-
-Formato de salida (SOLO JSON, sin explicaciones):
-{
-  "proposicion": "texto de la proposición solicitada"
-}`
-
-const DEFAULT_REWRITE_PROMPT = `Eres un asistente que reescribe proposiciones lógicas. Recibirás una instrucción en español que siempre incluye una condición base y el tipo de proposición deseado.
-
-Responde ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después, usando el formato:
-{
-  "proposicion": "texto de la proposición reescrita"
-}
-
-El texto de la proposición debe ser claro, gramaticalmente correcto y mantener coherencia lógica con la instrucción recibida.`
-
-const VARIANT_LABELS = {
-  reciproco: "recíproco",
-  inverso: "inverso",
-  contrareciproco: "contra-recíproco",
-} as const
-
-export type PropositionVariant = keyof typeof VARIANT_LABELS
+import {
+  DEFAULT_GROQ_MODEL,
+  DEFAULT_SYSTEM_PROMPT,
+  DEFAULT_REWRITE_PROMPT,
+  VARIANT_LABELS,
+  type PropositionVariant,
+} from "@/lib/groq-config"
 
 export async function generatePropositionVariant(
   condition: string,
   variant: PropositionVariant,
   model?: string,
   systemPrompt?: string,
+  variantInstruction?: string,
 ): Promise<{ text: string } | { error: string }> {
   try {
     if (!condition || typeof condition !== "string") {
@@ -57,15 +39,17 @@ export async function generatePropositionVariant(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
+        model: model || DEFAULT_GROQ_MODEL,
         messages: [
           {
             role: "system",
-            content: systemPrompt || DEFAULT_PROMPT,
+            content: systemPrompt || DEFAULT_SYSTEM_PROMPT,
           },
           {
             role: "user",
-            content: `Condición base: ${condition}\nTipo solicitado: ${variantLabel}.`,
+            content:
+              variantInstruction?.trim() ||
+              `Condición base: ${condition}\nTipo solicitado: ${variantLabel}.`,
           },
         ],
         temperature: 0.7,
@@ -136,7 +120,7 @@ export async function rewriteProposition(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
+        model: model || DEFAULT_GROQ_MODEL,
         messages: [
           {
             role: "system",
@@ -193,7 +177,7 @@ export async function getAvailableModels(): Promise<string[]> {
   const apiKey = process.env.GROQ_API_KEY_CUSTOM || process.env.GROQ_API_KEY
 
   if (!apiKey) {
-    return [DEFAULT_MODEL]
+    return [DEFAULT_GROQ_MODEL]
   }
 
   try {
@@ -207,7 +191,7 @@ export async function getAvailableModels(): Promise<string[]> {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       console.error("[v0] Groq API error (models):", errorData)
-      return [DEFAULT_MODEL]
+      return [DEFAULT_GROQ_MODEL]
     }
 
     const payload = await response.json()
@@ -219,13 +203,13 @@ export async function getAvailableModels(): Promise<string[]> {
 
     const uniqueModels = Array.from(new Set(models))
 
-    if (!uniqueModels.includes(DEFAULT_MODEL)) {
-      uniqueModels.unshift(DEFAULT_MODEL)
+    if (!uniqueModels.includes(DEFAULT_GROQ_MODEL)) {
+      uniqueModels.unshift(DEFAULT_GROQ_MODEL)
     }
 
     return uniqueModels
   } catch (error) {
     console.error("[v0] Error fetching Groq models:", error)
-    return [DEFAULT_MODEL]
+    return [DEFAULT_GROQ_MODEL]
   }
 }
