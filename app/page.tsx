@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -282,6 +283,10 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+  const [handledDeepLinkId, setHandledDeepLinkId] = useState<string | null>(null)
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const deepLinkedSubtopicId = searchParams.get("subtopic")
 
   const applyStoredAppState = (state: StoredAppState) => {
     const normalizedCurrent = normalizeStoredEra(state.currentEra)
@@ -1081,6 +1086,67 @@ export default function PropositionsApp() {
     loadPersistedData()
   }, [])
 
+  useEffect(() => {
+    if (isLoadingData) return
+    if (!deepLinkedSubtopicId) return
+    if (handledDeepLinkId === deepLinkedSubtopicId) return
+
+    const targetId = deepLinkedSubtopicId.trim()
+
+    if (!targetId) {
+      setHandledDeepLinkId(deepLinkedSubtopicId)
+      router.replace("/", { scroll: false })
+      return
+    }
+
+    let matchedTheme: Theme | null = null
+    let matchedSubtopic: Subtopic | null = null
+
+    for (const theme of themes) {
+      const found = theme.subtopics.find((subtopic) => subtopic.id === targetId)
+      if (found) {
+        matchedTheme = theme
+        matchedSubtopic = found
+        break
+      }
+    }
+
+    if (!matchedTheme || !matchedSubtopic) {
+      setHandledDeepLinkId(deepLinkedSubtopicId)
+      router.replace("/", { scroll: false })
+      return
+    }
+
+    ensureStandardPropositions(matchedTheme.id, matchedSubtopic.id)
+
+    const initialIndex = matchedSubtopic.propositions
+      ? matchedSubtopic.propositions.findIndex((prop) => prop.text.trim())
+      : matchedSubtopic.text.trim()
+        ? 0
+        : -1
+
+    setCurrentThemeId(matchedTheme.id)
+    setCurrentSubtopicId(matchedSubtopic.id)
+    setCurrentIndex(initialIndex >= 0 ? initialIndex : 0)
+    setPendingPracticeIndex(null)
+    setViewState("overview")
+    setHandledDeepLinkId(deepLinkedSubtopicId)
+    router.replace("/", { scroll: false })
+  }, [
+    deepLinkedSubtopicId,
+    handledDeepLinkId,
+    isLoadingData,
+    router,
+    themes,
+    ensureStandardPropositions,
+  ])
+
+  useEffect(() => {
+    if (!deepLinkedSubtopicId && handledDeepLinkId) {
+      setHandledDeepLinkId(null)
+    }
+  }, [deepLinkedSubtopicId, handledDeepLinkId])
+
   const loadPersistedData = async () => {
     try {
       console.log("[v0] Starting to load persisted data...")
@@ -1734,17 +1800,15 @@ export default function PropositionsApp() {
     })
   }
 
-  const openSubtopicDetail = (subtopicId: string) => {
-    if (!currentThemeId) return
-
-    const theme = themes.find((t) => t.id === currentThemeId)
+  const openSubtopicDetail = (themeId: string, subtopicId: string) => {
+    const theme = themes.find((t) => t.id === themeId)
     const subtopic = theme?.subtopics.find((item) => item.id === subtopicId)
 
     if (!subtopic) {
       return
     }
 
-    ensureStandardPropositions(currentThemeId, subtopicId)
+    ensureStandardPropositions(themeId, subtopicId)
 
     const initialIndex = subtopic.propositions
       ? subtopic.propositions.findIndex((prop) => prop.text.trim())
@@ -1752,6 +1816,7 @@ export default function PropositionsApp() {
         ? 0
         : -1
 
+    setCurrentThemeId(themeId)
     setCurrentSubtopicId(subtopicId)
     setCurrentIndex(initialIndex >= 0 ? initialIndex : 0)
     setPendingPracticeIndex(null)
@@ -2313,7 +2378,7 @@ export default function PropositionsApp() {
                       className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <Button
-                      onClick={() => openSubtopicDetail(subtopic.id)}
+                      onClick={() => openSubtopicDetail(currentTheme.id, subtopic.id)}
                       disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
                       className="whitespace-nowrap"
                     >
