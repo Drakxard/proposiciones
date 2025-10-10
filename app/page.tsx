@@ -200,33 +200,69 @@ const getLabelForProposition = (type: PropositionKind, index: number) => {
   return `Proposición ${index + 1}`
 }
 
+const coerceId = (value: unknown, fallback: string): string => {
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (trimmed) {
+      return trimmed
+    }
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value.toString()
+  }
+
+  if (typeof value === "bigint") {
+    return value.toString()
+  }
+
+  return fallback
+}
+
 const normalizeStoredEra = (storedEra: StoredEra): Era => {
   const createdAt = storedEra.createdAt ?? Date.now()
   const updatedAt = storedEra.updatedAt ?? createdAt
 
   return {
-    id: storedEra.id ?? createEraId(),
+    id: coerceId(storedEra.id, createEraId()),
     name: storedEra.name ?? "Ciclo sin nombre",
     createdAt,
     updatedAt,
     closedAt: storedEra.closedAt ?? null,
-    themes: (storedEra.themes ?? []).map((theme, themeIndex) => ({
-      id: theme.id ?? `theme-${themeIndex}`,
-      name: theme.name ?? `Tema ${themeIndex + 1}`,
-      subtopics: (theme.subtopics ?? []).map((subtopic, subIndex) => ({
-        id: subtopic.id ?? `${theme.id ?? `theme-${themeIndex}`}-subtopic-${subIndex}`,
-        text: subtopic.text ?? "",
-        propositions: subtopic.propositions
-          ? subtopic.propositions.map((prop, propIndex) => ({
-              id: prop.id ?? `${subtopic.id ?? `subtopic-${subIndex}`}-${propIndex}`,
-              type: (prop.type ?? "custom") as PropositionKind,
-              label: prop.label ?? `Proposición ${propIndex + 1}`,
-              text: prop.text ?? "",
-              audios: prop.audios ? [...prop.audios] : [],
-            }))
-          : null,
-      })),
-    })),
+    themes: (storedEra.themes ?? []).map((theme, themeIndex) => {
+      const normalizedThemeId = coerceId(theme.id, `theme-${themeIndex}`)
+
+      return {
+        id: normalizedThemeId,
+        name: theme.name ?? `Tema ${themeIndex + 1}`,
+        subtopics: (theme.subtopics ?? []).map((subtopic, subIndex) => {
+          const normalizedSubtopicId = coerceId(
+            subtopic.id,
+            `${normalizedThemeId}-subtopic-${subIndex}`,
+          )
+
+          return {
+            id: normalizedSubtopicId,
+            text: subtopic.text ?? "",
+            propositions: subtopic.propositions
+              ? subtopic.propositions.map((prop, propIndex) => {
+                const normalizedType = (prop.type ?? mapIndexToType(propIndex)) as PropositionKind
+                const normalizedLabel =
+                  prop.label ?? getLabelForProposition(normalizedType, propIndex)
+
+                return {
+                  id: coerceId(prop.id, `${normalizedSubtopicId}-${propIndex}`),
+                  type: normalizedType,
+                  label: normalizedLabel,
+                  text: prop.text ?? "",
+                  audios: Array.isArray(prop.audios) ? [...prop.audios] : [],
+                }
+              })
+              : null,
+          }
+        }),
+      }
+    }),
   }
 }
 
