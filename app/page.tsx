@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Play,
   Mic,
@@ -14,6 +15,9 @@ import {
   Loader2,
   RotateCcw,
   History,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -56,6 +60,7 @@ interface Proposition {
   label: string
   text: string
   audios: Blob[]
+  conditionId?: string
 }
 
 interface Subtopic {
@@ -224,17 +229,81 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
             `${themeId}-subtopic-${subIndex}`,
           )
 
+          const normalizedPropositions = (subtopic.propositions ?? []).map(
+            (prop, propIndex) => {
+              const normalizedId = ensureStringId(
+                prop.id,
+                `${subtopicId}-${propIndex}`,
+              )
+              const type = (prop.type ?? "custom") as PropositionKind
+              const baseLabel =
+                prop.label && prop.label.trim().length > 0
+                  ? prop.label
+                  : type !== "custom" && propositionTypeLabels[type as PropositionType]
+                    ? propositionTypeLabels[type as PropositionType]
+                    : getLabelForProposition(type, propIndex)
+              const rawConditionId =
+                typeof (prop as any).conditionId === "string"
+                  ? String((prop as any).conditionId)
+                  : undefined
+
+              return {
+                id: normalizedId,
+                type,
+                label: baseLabel,
+                text: prop.text ?? "",
+                audios: prop.audios ? [...prop.audios] : [],
+                conditionId:
+                  type === "condicion" ? rawConditionId ?? normalizedId : rawConditionId,
+              }
+            },
+          )
+
+          const conditionIds = normalizedPropositions
+            .filter((prop) => prop.type === "condicion")
+            .map((prop) => prop.conditionId ?? prop.id)
+          const fallbackConditionId =
+            conditionIds[0] ??
+            (normalizedPropositions.length > 0 ? `${subtopicId}-condicion` : undefined)
+
+          const propositionsWithConditions = normalizedPropositions.map(
+            (prop, index) => {
+              if (prop.type === "condicion") {
+                const conditionId = prop.conditionId ?? prop.id
+                return {
+                  ...prop,
+                  label:
+                    prop.label && prop.label.trim().length > 0
+                      ? prop.label
+                      : propositionTypeLabels.condicion,
+                  conditionId,
+                }
+              }
+
+              if (
+                prop.type !== "custom" &&
+                propositionTypeLabels[prop.type as PropositionType]
+              ) {
+                return {
+                  ...prop,
+                  label: propositionTypeLabels[prop.type as PropositionType],
+                  conditionId: prop.conditionId ?? fallbackConditionId,
+                }
+              }
+
+              return {
+                ...prop,
+                label: prop.label ?? getLabelForProposition(prop.type, index),
+                conditionId: prop.conditionId ?? fallbackConditionId,
+              }
+            },
+          )
+
           return {
             id: subtopicId,
             text: subtopic.text ?? "",
-            propositions: subtopic.propositions
-              ? subtopic.propositions.map((prop, propIndex) => ({
-                  id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
-                  type: (prop.type ?? "custom") as PropositionKind,
-                  label: prop.label ?? `Proposición ${propIndex + 1}`,
-                  text: prop.text ?? "",
-                  audios: prop.audios ? [...prop.audios] : [],
-                }))
+            propositions: propositionsWithConditions.length
+              ? propositionsWithConditions
               : null,
           }
         }),
@@ -290,6 +359,7 @@ export default function PropositionsApp() {
   >(null)
   const hasTriedExternalNavigationRefresh = useRef(false)
   const hasRefreshedForPendingExternalNavigation = useRef(false)
+  const [expandedConditionIds, setExpandedConditionIds] = useState<string[]>([])
 
   // 👇 de main
   const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
@@ -490,7 +560,139 @@ export default function PropositionsApp() {
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
   const propositions = currentSubtopic?.propositions || []
+  const propositionIndexMap = useMemo(() => {
+    const map = new Map<string, number>()
+    propositions.forEach((prop, index) => {
+      map.set(prop.id, index)
+    })
+    return map
+  }, [propositions])
+  const getPropositionIndex = useCallback(
+    (propositionId: string) => propositionIndexMap.get(propositionId) ?? -1,
+    [propositionIndexMap],
+  )
+  const conditionGroups = useMemo(() => {
+    const result: {
+      condition: Proposition
+      variants: Record<Exclude<PropositionType, "condicion">, Proposition | null>
+    }[] = []
+
+    const allPropositions = currentSubtopic?.propositions ?? []
+    const conditions = allPropositions.filter((prop) => prop.type === "condicion")
+
+    if (conditions.length === 0) {
+      return result
+    }
+
+    const defaultCondition = conditions[0]
+    const defaultConditionId = defaultCondition.conditionId ?? defaultCondition.id
+
+    const groupMap = new Map<
+      string,
+      {
+        condition: Proposition
+        variants: Record<Exclude<PropositionType, "condicion">, Proposition | null>
+      }
+    >()
+
+    conditions.forEach((condition) => {
+      const conditionId = condition.conditionId ?? condition.id
+      groupMap.set(conditionId, {
+        condition,
+        variants: {
+          reciproco: null,
+          inverso: null,
+          contrareciproco: null,
+        },
+      })
+    })
+
+    allPropositions.forEach((prop) => {
+      if (prop.type === "condicion" || prop.type === "custom") {
+        return
+      }
+
+      if (!STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType)) {
+        return
+      }
+
+      const variantType = prop.type as Exclude<PropositionType, "condicion">
+      const targetConditionId =
+        (prop.conditionId && groupMap.has(prop.conditionId))
+          ? prop.conditionId
+          : defaultConditionId
+
+      if (!targetConditionId) {
+        return
+      }
+
+      const group = groupMap.get(targetConditionId)
+      if (group) {
+        group.variants[variantType] = prop
+      }
+    })
+
+    conditions.forEach((condition) => {
+      const conditionId = condition.conditionId ?? condition.id
+      const entry = groupMap.get(conditionId)
+      if (entry) {
+        result.push(entry)
+      }
+    })
+
+    return result
+  }, [currentSubtopic?.propositions])
+  const customPropositions = useMemo(
+    () => (currentSubtopic?.propositions ?? []).filter((prop) => prop.type === "custom"),
+    [currentSubtopic?.propositions],
+  )
+  const conditionGroupIds = useMemo(
+    () => conditionGroups.map((group) => group.condition.conditionId ?? group.condition.id),
+    [conditionGroups],
+  )
+  useEffect(() => {
+    setExpandedConditionIds((prev) => {
+      if (conditionGroupIds.length === 0) {
+        return []
+      }
+
+      if (prev.length === 0) {
+        return conditionGroupIds
+      }
+
+      const valid = prev.filter((id) => conditionGroupIds.includes(id))
+      return valid.length === prev.length ? prev : valid
+    })
+  }, [conditionGroupIds])
   const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
+  const getConditionForProposition = useCallback(
+    (target: Proposition): Proposition | null => {
+      if (!currentSubtopic?.propositions) {
+        return null
+      }
+
+      if (target.type === "condicion") {
+        return target
+      }
+
+      const fallbackCondition = currentSubtopic.propositions.find(
+        (prop) => prop.type === "condicion",
+      )
+      const targetConditionId = target.conditionId ?? fallbackCondition?.conditionId ?? fallbackCondition?.id
+
+      if (!targetConditionId) {
+        return null
+      }
+
+      return (
+        currentSubtopic.propositions.find(
+          (prop) =>
+            prop.type === "condicion" && (prop.conditionId ?? prop.id) === targetConditionId,
+        ) ?? null
+      )
+    },
+    [currentSubtopic?.propositions],
+  )
   const hasContentAtIndex = useCallback(
     (index: number) => {
       const target = propositions[index]
@@ -547,37 +749,141 @@ export default function PropositionsApp() {
     updateSubtopicById(themeId, subtopicId, (subtopic) => {
       const existing = subtopic.propositions ?? []
 
-      const standardEntries = STANDARD_PROPOSITION_TYPES.map((type) => {
-        const existingEntry = existing.find((prop) => prop.type === type)
-        const label = propositionTypeLabels[type]
-
-        if (existingEntry) {
+      let normalized = existing.map((prop) => {
+        if (prop.type === "condicion") {
+          const conditionId = prop.conditionId ?? prop.id
           return {
-            ...existingEntry,
-            id: existingEntry.id ?? `${subtopic.id}-${type}`,
-            type,
-            label,
-            text: type === "condicion" ? subtopic.text : existingEntry.text,
-            audios: [...existingEntry.audios],
+            ...prop,
+            label:
+              prop.label && prop.label.trim().length > 0
+                ? prop.label
+                : propositionTypeLabels.condicion,
+            conditionId,
           }
         }
 
-        return {
-          id: `${subtopic.id}-${type}`,
-          type,
-          label,
-          text: type === "condicion" ? subtopic.text : "",
-          audios: [],
+        if (
+          prop.type !== "custom" &&
+          STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType)
+        ) {
+          return {
+            ...prop,
+            label: propositionTypeLabels[prop.type as PropositionType],
+          }
         }
+
+        return { ...prop }
       })
 
-      const additionalEntries = existing
-        .filter((prop) => !STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType))
-        .map((prop) => ({ ...prop, audios: [...prop.audios] }))
+      let conditions = normalized.filter((prop) => prop.type === "condicion")
+
+      if (conditions.length === 0) {
+        const conditionId = `${subtopic.id}-condicion`
+        const newCondition: Proposition = {
+          id: conditionId,
+          type: "condicion",
+          label: propositionTypeLabels.condicion,
+          text: "",
+          audios: [],
+          conditionId,
+        }
+        normalized = [newCondition, ...normalized]
+        conditions = [newCondition]
+      }
+
+      const conditionIds = conditions.map((condition) => condition.conditionId ?? condition.id)
+      const defaultConditionId = conditionIds[0]
+
+      normalized = normalized.map((prop) => {
+        if (prop.type === "condicion") {
+          const conditionId = prop.conditionId ?? prop.id
+          return {
+            ...prop,
+            conditionId,
+          }
+        }
+
+        if (
+          prop.type !== "custom" &&
+          STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType)
+        ) {
+          const assignedConditionId =
+            prop.conditionId && conditionIds.includes(prop.conditionId)
+              ? prop.conditionId
+              : defaultConditionId
+
+          return {
+            ...prop,
+            conditionId: assignedConditionId,
+            label: propositionTypeLabels[prop.type as PropositionType],
+          }
+        }
+
+        return prop
+      })
+
+      const enriched: Proposition[] = [...normalized]
+
+      conditions.forEach((condition) => {
+        const conditionId = condition.conditionId ?? condition.id
+
+        STANDARD_PROPOSITION_TYPES.filter((type) => type !== "condicion").forEach(
+          (type) => {
+            const existingIndex = enriched.findIndex(
+              (prop) =>
+                prop.type === type && (prop.conditionId ?? conditionId) === conditionId,
+            )
+
+            if (existingIndex === -1) {
+              enriched.push({
+                id: `${condition.id}-${type}`,
+                type,
+                label: propositionTypeLabels[type],
+                text: "",
+                audios: [],
+                conditionId,
+              })
+            } else {
+              enriched[existingIndex] = {
+                ...enriched[existingIndex],
+                type,
+                label: propositionTypeLabels[type],
+                conditionId,
+              }
+            }
+          },
+        )
+      })
+
+      const orderedStandard: Proposition[] = []
+      conditions.forEach((condition) => {
+        const conditionId = condition.conditionId ?? condition.id
+        const normalizedCondition = enriched.find((prop) => prop.id === condition.id) ?? condition
+        orderedStandard.push(normalizedCondition)
+
+        STANDARD_PROPOSITION_TYPES.filter((type) => type !== "condicion").forEach(
+          (type) => {
+            const match = enriched.find(
+              (prop) =>
+                prop.type === type && (prop.conditionId ?? conditionId) === conditionId,
+            )
+
+            if (match) {
+              orderedStandard.push(match)
+            }
+          },
+        )
+      })
+
+      const additionalEntries = enriched.filter(
+        (prop) =>
+          prop.type === "custom" ||
+          !STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType),
+      )
 
       return {
         ...subtopic,
-        propositions: [...standardEntries, ...additionalEntries],
+        propositions: [...orderedStandard, ...additionalEntries],
       }
     })
   }
@@ -737,8 +1043,10 @@ export default function PropositionsApp() {
       return
     }
 
-    if (!currentSubtopic.text.trim()) {
-      alert("Agrega una condición antes de generar nuevas proposiciones.")
+    const condition = getConditionForProposition(proposition)
+
+    if (!condition || !condition.text.trim()) {
+      alert("Agrega contenido a la condición antes de generar nuevas proposiciones.")
       return
     }
 
@@ -749,7 +1057,7 @@ export default function PropositionsApp() {
 
     try {
       const result = await generatePropositionVariant(
-        currentSubtopic.text,
+        condition.text,
         variantType,
         model,
         promptTemplate,
@@ -830,12 +1138,22 @@ export default function PropositionsApp() {
                   ? propositionTypeLabels[baseType as PropositionType]
                   : getLabelForProposition(baseType, index)
 
+            const propositionId = `${newSubtopicId}-${index}`
+            const rawConditionId =
+              typeof entry?.condicionId === "string"
+                ? entry.condicionId
+                : undefined
+
             return {
-              id: `${newSubtopicId}-${index}`,
+              id: propositionId,
               type: baseType,
               label,
               text: textValue,
               audios: [],
+              conditionId:
+                baseType === "condicion"
+                  ? rawConditionId ?? propositionId
+                  : rawConditionId,
             }
           })
         : null
@@ -943,9 +1261,7 @@ export default function PropositionsApp() {
   const deleteProposition = (propositionId: string) => {
     if (!currentThemeId || !currentSubtopicId) return
 
-    const remainingPropositions = (currentSubtopic?.propositions ?? []).filter(
-      (prop) => prop.id !== propositionId,
-    )
+    const target = currentSubtopic?.propositions?.find((prop) => prop.id === propositionId)
 
     setThemes((prevThemes) =>
       prevThemes.map((theme) => {
@@ -960,11 +1276,20 @@ export default function PropositionsApp() {
               return subtopic
             }
 
-            const filtered = subtopic.propositions.filter((prop) => prop.id !== propositionId)
+            let filtered: Proposition[] = subtopic.propositions
+
+            if (target?.type === "condicion") {
+              const conditionId = target.conditionId ?? target.id
+              filtered = subtopic.propositions.filter(
+                (prop) => prop.id !== propositionId && (prop.conditionId ?? conditionId) !== conditionId,
+              )
+            } else {
+              filtered = subtopic.propositions.filter((prop) => prop.id !== propositionId)
+            }
 
             return {
               ...subtopic,
-              propositions: filtered.length > 0 ? filtered : [],
+              propositions: filtered,
             }
           }),
         }
@@ -973,10 +1298,14 @@ export default function PropositionsApp() {
 
     ensureStandardPropositions(currentThemeId, currentSubtopicId)
 
-    if (remainingPropositions.length === 0) {
+    const remaining = (currentSubtopic?.propositions ?? []).filter(
+      (prop) => prop.id !== propositionId,
+    )
+
+    if (remaining.length === 0) {
       setCurrentIndex(0)
     } else {
-      setCurrentIndex((prev) => Math.min(prev, remainingPropositions.length - 1))
+      setCurrentIndex((prev) => Math.min(prev, remaining.length - 1))
     }
 
     if (focusedItem?.scope === "proposition" && focusedItem.id === propositionId) {
@@ -1956,27 +2285,181 @@ export default function PropositionsApp() {
     }))
   }
 
+  const addConditionToCurrentSubtopic = () => {
+    if (!currentThemeId || !currentSubtopicId) {
+      return
+    }
+
+    const conditionId = `${currentSubtopicId}-cond-${Date.now()}`
+
+    updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+      const existing = subtopic.propositions ?? []
+      const newCondition: Proposition = {
+        id: conditionId,
+        type: "condicion",
+        label: propositionTypeLabels.condicion,
+        text: "",
+        audios: [],
+        conditionId,
+      }
+      const variants = STANDARD_PROPOSITION_TYPES.filter(
+        (type) => type !== "condicion",
+      ).map((type) => ({
+        id: `${conditionId}-${type}`,
+        type,
+        label: propositionTypeLabels[type],
+        text: "",
+        audios: [],
+        conditionId,
+      }))
+
+      return {
+        ...subtopic,
+        propositions: [...existing, newCondition, ...variants],
+      }
+    })
+
+    ensureStandardPropositions(currentThemeId, currentSubtopicId)
+    setExpandedConditionIds((prev) => [...prev, conditionId])
+  }
+
+  const toggleConditionExpansion = (conditionId: string) => {
+    setExpandedConditionIds((prev) =>
+      prev.includes(conditionId)
+        ? prev.filter((id) => id !== conditionId)
+        : [...prev, conditionId],
+    )
+  }
+
+  const renderPropositionActions = (prop: Proposition, hasContent: boolean) => {
+    const index = getPropositionIndex(prop.id)
+
+    return (
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {prop.type !== "condicion" && prop.type !== "custom" && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => generateVariantForSubtopic(prop)}
+            disabled={
+              generatingVariantId === prop.id ||
+              generatingPropositionId !== null ||
+              isRecording
+            }
+            className="whitespace-nowrap"
+          >
+            {generatingVariantId === prop.id ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+              </>
+            ) : hasContent ? (
+              "Regenerar"
+            ) : (
+              "Generar"
+            )}
+          </Button>
+        )}
+
+        {prop.type === "custom" && currentSubtopic && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
+            disabled={
+              generatingPropositionId === prop.id ||
+              isVariantGenerationActive ||
+              isRecording
+            }
+            className="whitespace-nowrap"
+          >
+            {generatingPropositionId === prop.id ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+              </>
+            ) : (
+              "Generar variantes"
+            )}
+          </Button>
+        )}
+
+        {prop.audios.length > 0 && index !== -1 && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => playRecordedAudio(index)}
+            className="hover:bg-primary/10"
+            title="Reproducir último audio"
+          >
+            <Play className="w-5 h-5" />
+          </Button>
+        )}
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => handleRewriteProposition(prop)}
+          className="hover:bg-primary/10"
+          title="Rehacer esta proposición"
+          disabled={rewritingPropositionId === prop.id || !hasContent}
+        >
+          {rewritingPropositionId === prop.id ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <RotateCcw className="w-5 h-5" />
+          )}
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => {
+            if (index !== -1) {
+              goToProposition(index)
+            }
+          }}
+          className="hover:bg-primary/10"
+          title="Practicar esta proposición"
+          disabled={!hasContent}
+        >
+          <Headphones className="w-5 h-5" />
+        </Button>
+      </div>
+    )
+  }
+
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
     updateSubtopicById(currentThemeId, id, (subtopic) => {
-      const updated: Subtopic = {
+      return {
         ...subtopic,
         text,
       }
+    })
+  }
 
-      if (subtopic.propositions) {
-        updated.propositions = subtopic.propositions.map((prop) =>
-          prop.type === "condicion"
-            ? {
-                ...prop,
-                text,
-              }
-            : prop,
-        )
+  const updatePropositionText = (propositionId: string, text: string) => {
+    if (!currentThemeId || !currentSubtopicId) {
+      return
+    }
+
+    updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+      if (!subtopic.propositions) {
+        return subtopic
       }
 
-      return updated
+      const index = subtopic.propositions.findIndex((prop) => prop.id === propositionId)
+      if (index === -1) {
+        return subtopic
+      }
+
+      const updated = [...subtopic.propositions]
+      updated[index] = { ...updated[index], text }
+
+      return {
+        ...subtopic,
+        propositions: updated,
+      }
     })
   }
 
@@ -2208,13 +2691,15 @@ export default function PropositionsApp() {
         variants.push({ type: variant, text: result.text })
       }
 
+      const newConditionId = `${propositionId}-condicion`
       const generated: Proposition[] = [
         {
-          id: `${propositionId}-condicion`,
+          id: newConditionId,
           type: "condicion",
           label: propositionTypeLabels.condicion,
           text: proposition.text,
           audios: proposition.audios,
+          conditionId: newConditionId,
         },
         ...variants.map((variant) => ({
           id: `${propositionId}-${variant.type}`,
@@ -2222,6 +2707,7 @@ export default function PropositionsApp() {
           label: propositionTypeLabels[variant.type as PropositionType],
           text: variant.text,
           audios: [],
+          conditionId: newConditionId,
         })),
       ]
 
@@ -2255,10 +2741,11 @@ export default function PropositionsApp() {
       return
     }
 
-    const conditionText =
-      currentSubtopic.text ||
-      currentSubtopic.propositions?.find((prop) => prop.type === "condicion")?.text ||
-      ""
+    const associatedCondition = getConditionForProposition(target)
+    const fallbackCondition = currentSubtopic.propositions?.find(
+      (prop) => prop.type === "condicion",
+    )
+    const conditionText = associatedCondition?.text ?? fallbackCondition?.text ?? ""
 
     if (target.type === "condicion") {
       alert("Edita la condición directamente en el campo principal.")
@@ -2271,7 +2758,9 @@ export default function PropositionsApp() {
       }
 
       const typeLabel = target.label
-      const defaultPrompt = `Condicion: ${conditionText}, quiero que hagas el ${typeLabel}`
+      const defaultPrompt = conditionText
+        ? `Condicion: ${conditionText}, quiero que hagas el ${typeLabel}`
+        : `Quiero que hagas el ${typeLabel}`
       const userPrompt = window.prompt(
         "Escribe cómo quieres rehacer la proposición:",
         defaultPrompt,
@@ -2513,12 +3002,12 @@ export default function PropositionsApp() {
             </div>
             <div className="flex items-center gap-2">
               <Button
-                variant="ghost"
-                size="icon"
+                variant="outline"
                 onClick={importSubtopicFromClipboard}
                 title="Importar subtema desde portapapeles"
+                className="gap-2"
               >
-                <Plus className="w-5 h-5" />
+                <ClipboardList className="w-4 h-4" /> Importar subtema
               </Button>
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
                 <Settings className="w-5 h-5" />
@@ -2533,7 +3022,7 @@ export default function PropositionsApp() {
           ) : subtopics.length === 0 ? (
             <Card className="p-12 text-center space-y-4">
               <p className="text-muted-foreground">
-                Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles.
+                Este tema aún no tiene subtemas. Usa el botón de importar para cargar contenido desde el portapapeles.
               </p>
             </Card>
           ) : (
@@ -2624,164 +3113,254 @@ export default function PropositionsApp() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
-          {propositions.length === 0 ? (
+          {conditionGroups.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
-                Este subtema no tiene proposiciones disponibles en este momento.
+                Este subtema aún no tiene condiciones registradas.
               </p>
-              <Button onClick={() => ensureStandardPropositions(currentTheme.id, currentSubtopic.id)}>
-                Restaurar proposiciones base
-              </Button>
+              <div className="flex flex-wrap justify-center gap-3">
+                <Button onClick={addConditionToCurrentSubtopic}>
+                  <Plus className="w-4 h-4 mr-2" /> Agregar primera condición
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => ensureStandardPropositions(currentTheme.id, currentSubtopic.id)}
+                >
+                  Restaurar proposiciones base
+                </Button>
+              </div>
             </Card>
           ) : (
-            <>
-              <Card className="p-8 space-y-6">
-                {propositions.map((prop, index) => {
-                  const isSelected = focusedItem?.scope === "proposition" && focusedItem.id === prop.id
+            <Card className="p-6 space-y-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Condiciones</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Despliega cada condición para trabajar sus variantes.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={addConditionToCurrentSubtopic}
+                  title="Agregar condición"
+                >
+                  <Plus className="w-5 h-5" />
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                {conditionGroups.map((group, index) => {
+                  const condition = group.condition
+                  const conditionId = condition.conditionId ?? condition.id
+                  const isExpanded = expandedConditionIds.includes(conditionId)
+                  const hasConditionContent = condition.text.trim().length > 0
+                  const isFocused =
+                    focusedItem?.scope === "proposition" && focusedItem.id === condition.id
+
+                  return (
+                    <div
+                      key={conditionId}
+                      className={`rounded-lg border transition focus:outline-none ${
+                        isFocused
+                          ? "border-primary bg-primary/5"
+                          : "border-border/40 bg-background hover:bg-muted/30"
+                      }`}
+                      onMouseEnter={() => setFocusedItem({ scope: "proposition", id: condition.id })}
+                      onFocus={() => setFocusedItem({ scope: "proposition", id: condition.id })}
+                      tabIndex={0}
+                    >
+                      <div className="flex flex-col gap-4 p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3 flex-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => toggleConditionExpansion(conditionId)}
+                              className="mt-1"
+                              title={isExpanded ? "Ocultar variantes" : "Mostrar variantes"}
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4" />
+                              )}
+                            </Button>
+                            <div className="flex-1 space-y-2">
+                              <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                                {`Condición ${index + 1}`}
+                              </p>
+                              <Textarea
+                                value={condition.text}
+                                onChange={(event) =>
+                                  updatePropositionText(condition.id, event.target.value)
+                                }
+                                placeholder="Describe la condición principal..."
+                                onFocus={() =>
+                                  setFocusedItem({ scope: "proposition", id: condition.id })
+                                }
+                                className="min-h-[120px]"
+                              />
+                            </div>
+                          </div>
+                          {renderPropositionActions(condition, hasConditionContent)}
+                        </div>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="border-t bg-muted/20">
+                          {STANDARD_PROPOSITION_TYPES.filter((type) => type !== "condicion").map(
+                            (type) => {
+                              const variant =
+                                group.variants[type as Exclude<PropositionType, "condicion">]
+                              if (!variant) {
+                                return null
+                              }
+
+                              const variantHasContent = variant.text.trim().length > 0
+                              const isVariantFocused =
+                                focusedItem?.scope === "proposition" &&
+                                focusedItem.id === variant.id
+
+                              return (
+                                <div
+                                  key={variant.id}
+                                  className={`flex flex-col gap-3 p-4 transition ${
+                                    isVariantFocused ? "bg-primary/10" : ""
+                                  }`}
+                                  onMouseEnter={() =>
+                                    setFocusedItem({ scope: "proposition", id: variant.id })
+                                  }
+                                  onFocus={() =>
+                                    setFocusedItem({ scope: "proposition", id: variant.id })
+                                  }
+                                  tabIndex={0}
+                                >
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1 space-y-2">
+                                      <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                                        {variant.label}
+                                      </p>
+                                      <Textarea
+                                        value={variant.text}
+                                        onChange={(event) =>
+                                          updatePropositionText(variant.id, event.target.value)
+                                        }
+                                        placeholder={`Escribe el ${variant.label.toLowerCase()}...`}
+                                        onFocus={() =>
+                                          setFocusedItem({ scope: "proposition", id: variant.id })
+                                        }
+                                        className="min-h-[120px]"
+                                      />
+                                    </div>
+                                    {renderPropositionActions(variant, variantHasContent)}
+                                  </div>
+
+                                  {rewritePreview && rewritePreview.propositionId === variant.id && (
+                                    <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                                      <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                                        Previsualización
+                                      </p>
+                                      <div className="text-base leading-relaxed text-foreground break-words">
+                                        <MathText text={rewritePreview.text} />
+                                      </div>
+                                      <div className="flex flex-wrap justify-end gap-2">
+                                        <Button size="sm" onClick={confirmRewritePreview}>
+                                          Confirmar
+                                        </Button>
+                                        <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                                          Reintentar
+                                        </Button>
+                                        <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                                          Cancelar
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            },
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
+
+          {customPropositions.length > 0 && (
+            <Card className="p-6 space-y-4">
+              <h2 className="text-lg font-semibold">Proposiciones personalizadas</h2>
+              <div className="space-y-4">
+                {customPropositions.map((prop) => {
                   const hasContent = prop.text.trim().length > 0
-                  const isStandardVariant =
-                    prop.type !== "custom" && prop.type !== "condicion"
+                  const isFocused =
+                    focusedItem?.scope === "proposition" && focusedItem.id === prop.id
 
                   return (
                     <div
                       key={prop.id}
-                      className={`p-6 rounded-lg transition-colors space-y-4 ${
-                        isSelected ? "bg-primary/10" : "hover:bg-muted/50"
+                      className={`rounded-lg border p-4 transition ${
+                        isFocused
+                          ? "border-primary bg-primary/5"
+                          : "border-border/40 bg-background hover:bg-muted/30"
                       }`}
                       onMouseEnter={() => setFocusedItem({ scope: "proposition", id: prop.id })}
                       onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
                       tabIndex={0}
                     >
-                    <div className="flex items-start justify-between gap-6">
-                      <div className="flex-1 space-y-2">
-                        <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                          {prop.label}
-                        </p>
-                        <div className="text-lg leading-relaxed text-foreground break-words">
-                          {hasContent ? (
-                            <MathText text={prop.text} />
-                          ) : (
-                            <p className="text-sm italic text-muted-foreground">
-                              Aún no has generado esta proposición.
-                            </p>
-                          )}
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 space-y-2">
+                          <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                            {prop.label}
+                          </p>
+                          <Textarea
+                            value={prop.text}
+                            onChange={(event) => updatePropositionText(prop.id, event.target.value)}
+                            placeholder="Escribe la proposición personalizada..."
+                            onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                            className="min-h-[120px]"
+                          />
                         </div>
+                        {renderPropositionActions(prop, hasContent)}
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isStandardVariant && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => generateVariantForSubtopic(prop)}
-                            disabled={
-                              generatingVariantId === prop.id ||
-                              generatingPropositionId !== null ||
-                              isRecording
-                            }
-                            className="whitespace-nowrap"
-                          >
-                            {generatingVariantId === prop.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                              </>
-                            ) : hasContent ? (
-                              "Regenerar"
-                            ) : (
-                              "Generar"
-                            )}
-                          </Button>
-                        )}
-                        {prop.type === "custom" && currentSubtopic && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
-                            disabled={
-                              generatingPropositionId === prop.id ||
-                              isVariantGenerationActive ||
-                              isRecording
-                            }
-                            className="whitespace-nowrap"
-                          >
-                            {generatingPropositionId === prop.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                              </>
-                            ) : (
-                              "Generar variantes"
-                            )}
-                          </Button>
-                        )}
-                        {prop.audios.length > 0 && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => playRecordedAudio(index)}
-                            className="hover:bg-primary/10"
-                            title="Reproducir último audio"
-                          >
-                            <Play className="w-5 h-5" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRewriteProposition(prop)}
-                          className="hover:bg-primary/10"
-                          title="Rehacer esta proposición"
-                          disabled={rewritingPropositionId === prop.id || !hasContent}
-                        >
-                          {rewritingPropositionId === prop.id ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <RotateCcw className="w-5 h-5" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => goToProposition(index)}
-                          className="hover:bg-primary/10"
-                          title="Practicar esta proposición"
-                          disabled={!hasContent}
-                        >
-                          <Headphones className="w-5 h-5" />
-                        </Button>
-                      </div>
-                    </div>
-                    {rewritePreview && rewritePreview.propositionId === prop.id && (
-                      <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
-                        <p className="text-sm font-medium text-primary uppercase tracking-wide">
-                          Previsualización
-                        </p>
-                        <div className="text-base leading-relaxed text-foreground break-words">
-                          <MathText text={rewritePreview.text} />
+
+                      {rewritePreview && rewritePreview.propositionId === prop.id && (
+                        <div className="mt-4 rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                          <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                            Previsualización
+                          </p>
+                          <div className="text-base leading-relaxed text-foreground break-words">
+                            <MathText text={rewritePreview.text} />
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button size="sm" onClick={confirmRewritePreview}>
+                              Confirmar
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                              Reintentar
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                              Cancelar
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button size="sm" onClick={confirmRewritePreview}>
-                            Confirmar
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={retryRewritePreview}>
-                            Reintentar
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
-                            Cancelar
-                          </Button>
-                        </div>
-                      </div>
-                    )}
+                      )}
                     </div>
                   )
                 })}
-              </Card>
-              <p className="text-center text-sm text-muted-foreground">
-                Presiona la barra espaciadora para iniciar la práctica.
-              </p>
-              <p className="text-center text-xs text-muted-foreground">
-                Selecciona una proposición y presiona Q o X para eliminarla.
-              </p>
-            </>
+              </div>
+            </Card>
           )}
+
+          <p className="text-center text-sm text-muted-foreground">
+            Presiona la barra espaciadora para iniciar la práctica.
+          </p>
+          <p className="text-center text-xs text-muted-foreground">
+            Selecciona una proposición y presiona Q o X para eliminarla.
+          </p>
         </div>
       </div>
     )
