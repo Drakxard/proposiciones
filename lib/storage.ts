@@ -3,7 +3,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from "idb"
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 type PropositionKind = PropositionType | "custom"
 
-type StoredProposition = {
+export type StoredProposition = {
   id: string
   type: PropositionKind
   label: string
@@ -11,13 +11,13 @@ type StoredProposition = {
   audios: Blob[]
 }
 
-type StoredSubtopic = {
+export type StoredSubtopic = {
   id: string
   text: string
   propositions: StoredProposition[] | null
 }
 
-type StoredTheme = {
+export type StoredTheme = {
   id: string
   name: string
   subtopics: StoredSubtopic[]

@@ -34,6 +34,7 @@ import {
   type StoredAppState,
   type StoredEra,
 } from "@/lib/storage"
+import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -271,6 +272,9 @@ export default function PropositionsApp() {
     | null
   >(null)
   const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
+  const [pendingExternalNavigation, setPendingExternalNavigation] = useState<
+    { eraId: string; themeId: string; subtopicId: string } | null
+  >(null)
 
   // 👇 de main
   const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
@@ -282,6 +286,43 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+
+  useEffect(() => {
+    if (isLoadingData) {
+      return
+    }
+
+    if (typeof window === "undefined") {
+      return
+    }
+
+    try {
+      const raw = window.localStorage.getItem(PENDING_SUBTOPIC_STORAGE_KEY)
+      if (!raw) {
+        return
+      }
+
+      window.localStorage.removeItem(PENDING_SUBTOPIC_STORAGE_KEY)
+
+      const parsed = JSON.parse(raw) as {
+        eraId?: string
+        themeId?: string
+        subtopicId?: string
+      } | null
+
+      if (!parsed?.eraId || !parsed.themeId || !parsed.subtopicId) {
+        return
+      }
+
+      setPendingExternalNavigation({
+        eraId: parsed.eraId,
+        themeId: parsed.themeId,
+        subtopicId: parsed.subtopicId,
+      })
+    } catch (error) {
+      console.warn("[v0] No se pudo procesar la navegación externa pendiente:", error)
+    }
+  }, [isLoadingData])
 
   const applyStoredAppState = (state: StoredAppState) => {
     const normalizedCurrent = normalizeStoredEra(state.currentEra)
@@ -493,6 +534,77 @@ export default function PropositionsApp() {
       }
     })
   }
+
+  useEffect(() => {
+    if (!pendingExternalNavigation) {
+      return
+    }
+
+    const { eraId, themeId, subtopicId } = pendingExternalNavigation
+
+    if (eraId !== currentEra.id) {
+      const targetEra = eraHistory.find((era) => era.id === eraId)
+
+      if (!targetEra) {
+        console.warn("[v0] No se encontró el ciclo solicitado para la navegación externa:", eraId)
+        setPendingExternalNavigation(null)
+        return
+      }
+
+      const snapshot = cloneEra({ ...currentEra, themes: cloneThemes(themes) })
+      const remainingHistory = eraHistory.filter((era) => era.id !== eraId)
+
+      setEraHistory([snapshot, ...remainingHistory])
+
+      const reopenedEra = {
+        ...cloneEra(targetEra),
+        closedAt: null,
+        updatedAt: Date.now(),
+      }
+
+      setCurrentEra(reopenedEra)
+      setThemes(cloneThemes(targetEra.themes))
+      return
+    }
+
+    const theme = themes.find((item) => item.id === themeId)
+
+    if (!theme) {
+      console.warn("[v0] No se encontró el tema solicitado para la navegación externa:", themeId)
+      setPendingExternalNavigation(null)
+      return
+    }
+
+    const subtopic = theme.subtopics.find((item) => item.id === subtopicId)
+
+    if (!subtopic) {
+      console.warn("[v0] No se encontró el subtema solicitado para la navegación externa:", subtopicId)
+      setPendingExternalNavigation(null)
+      return
+    }
+
+    ensureStandardPropositions(themeId, subtopicId)
+
+    const initialIndex = subtopic.propositions
+      ? subtopic.propositions.findIndex((prop) => prop.text.trim())
+      : subtopic.text.trim()
+        ? 0
+        : -1
+
+    setCurrentThemeId(themeId)
+    setCurrentSubtopicId(subtopicId)
+    setCurrentIndex(initialIndex >= 0 ? initialIndex : 0)
+    setPendingPracticeIndex(null)
+    setViewState("overview")
+
+    setPendingExternalNavigation(null)
+  }, [
+    pendingExternalNavigation,
+    currentEra,
+    eraHistory,
+    themes,
+    ensureStandardPropositions,
+  ])
 
   const getGroqSettings = (): {
     model?: string
