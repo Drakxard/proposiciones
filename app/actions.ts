@@ -22,6 +22,33 @@ El texto de la proposición debe ser claro, gramaticalmente correcto y mantener 
 const CONDITION_PLACEHOLDER_REGEX = /\{\{\s*condicion\s*\}\}/i
 const TYPE_PLACEHOLDER_REGEX = /\{\{\s*tipo\s*\}\}/i
 
+const extractPropositionText = (parsed: unknown): string | undefined => {
+  if (!parsed || typeof parsed !== "object") {
+    return undefined
+  }
+
+  const candidates = [
+    "proposicion",
+    "proposición",
+    "proposition",
+    "texto",
+    "text",
+    "respuesta",
+  ] as const
+
+  for (const key of candidates) {
+    const value = (parsed as Record<string, unknown>)[key]
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      if (trimmed) {
+        return trimmed
+      }
+    }
+  }
+
+  return undefined
+}
+
 const formatVariantPrompt = (
   condition: string,
   variant: PropositionVariant,
@@ -130,11 +157,13 @@ export async function generatePropositionVariant(
       }
     }
 
-    if (!parsed.proposicion || typeof parsed.proposicion !== "string") {
+    const propositionText = extractPropositionText(parsed)
+
+    if (!propositionText) {
       return { error: "Respuesta de Groq no tiene el formato esperado" }
     }
 
-    return { text: parsed.proposicion }
+    return { text: propositionText }
   } catch (error) {
     console.error("[v0] Error generating proposition variant:", error)
     return {
@@ -209,11 +238,13 @@ export async function rewriteProposition(
       }
     }
 
-    if (!result.proposicion || typeof result.proposicion !== "string") {
+    const propositionText = extractPropositionText(result)
+
+    if (!propositionText) {
       return { error: "Respuesta de Groq no tiene el formato esperado" }
     }
 
-    return { text: result.proposicion }
+    return { text: propositionText }
   } catch (error) {
     console.error("[v0] Error rewriting proposition:", error)
     return { error: `Error al rehacer la proposición: ${error instanceof Error ? error.message : String(error)}` }
