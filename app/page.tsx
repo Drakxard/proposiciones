@@ -526,6 +526,14 @@ export default function PropositionsApp() {
     () => buildPropositionNavigationOrder(propositions),
     [propositions],
   )
+  const filledPropositionIndices = useMemo(() => {
+    return propositions.reduce<number[]>((indices, proposition, index) => {
+      if (proposition.text.trim().length > 0) {
+        indices.push(index)
+      }
+      return indices
+    }, [])
+  }, [propositions])
   const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
   const hasContentAtIndex = useCallback(
     (index: number) => {
@@ -558,6 +566,21 @@ export default function PropositionsApp() {
   )
   const canGoToPrevious = findPreviousFilledIndex(currentIndex) !== -1
   const canGoToNext = findNextFilledIndex(currentIndex) !== -1
+  const practiceProgressLabel = useMemo(() => {
+    if (!propositions.length) {
+      return null
+    }
+
+    if (!filledPropositionIndices.length) {
+      return `Proposición ${currentIndex + 1} de ${propositions.length}`
+    }
+
+    const position = filledPropositionIndices.indexOf(currentIndex)
+    const total = filledPropositionIndices.length
+    const displayPosition = position >= 0 ? position + 1 : Math.min(currentIndex + 1, total)
+
+    return `Proposición ${displayPosition} de ${total}`
+  }, [currentIndex, filledPropositionIndices, propositions.length])
   const isNavigationLocked = isRecording || viewState === "countdown"
   const isVariantGenerationActive = generatingVariantId !== null
   const isGenerationBusy = generatingVariantId !== null || generatingPropositionId !== null
@@ -2946,7 +2969,7 @@ export default function PropositionsApp() {
           </div>
         ) : null}
         <Card className="p-12 space-y-6">
-          {isPracticeView && propositions.length > 0 && (
+          {isPracticeView && propositions.length > 0 && practiceProgressLabel && (
             <div className="flex items-center justify-center gap-4">
               <Button
                 variant="outline"
@@ -2960,7 +2983,7 @@ export default function PropositionsApp() {
                 {"<-"}
               </Button>
               <span className="text-sm font-medium text-muted-foreground">
-                Proposición {currentIndex + 1} de {propositions.length}
+                {practiceProgressLabel}
               </span>
               <Button
                 variant="outline"
