@@ -113,7 +113,13 @@ export const createDefaultAppState = (): StoredAppState => {
       createdAt: timestamp,
       updatedAt: timestamp,
       closedAt: null,
-      themes: [],
+      themes: [
+        {
+          id: EXTERNAL_THEME_ID,
+          name: EXTERNAL_THEME_NAME,
+          subtopics: [],
+        },
+      ],
     },
     eraHistory: [],
   }

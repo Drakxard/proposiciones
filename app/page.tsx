@@ -34,8 +34,12 @@ import {
   type StoredAppState,
   type StoredEra,
 } from "@/lib/storage"
-import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
-import { ensureStringId } from "@/lib/utils"
+import {
+  EXTERNAL_THEME_ID,
+  EXTERNAL_THEME_NAME,
+  PENDING_SUBTOPIC_STORAGE_KEY,
+} from "@/lib/external-subtopics"
+import { ensureStringId, normalizeStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -89,19 +93,56 @@ interface Era {
 
 const createEraId = () => `era-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
+const createExternalTheme = (): Theme => ({
+  id: EXTERNAL_THEME_ID,
+  name: EXTERNAL_THEME_NAME,
+  subtopics: [],
+})
+
+const ensureExternalTheme = (themes: Theme[]): Theme[] => {
+  let hasExternalTheme = false
+
+  const sanitizedThemes = themes.map((theme) => {
+    const normalizedId = normalizeStringId(theme.id)
+
+    if (normalizedId && normalizedId.toLowerCase() === EXTERNAL_THEME_ID) {
+      hasExternalTheme = true
+      return {
+        ...theme,
+        id: EXTERNAL_THEME_ID,
+        name: EXTERNAL_THEME_NAME,
+        subtopics: theme.subtopics ?? [],
+      }
+    }
+
+    return {
+      ...theme,
+      subtopics: theme.subtopics ?? [],
+    }
+  })
+
+  if (hasExternalTheme) {
+    return sanitizedThemes
+  }
+
+  return [...sanitizedThemes, createExternalTheme()]
+}
+
 const cloneThemes = (themes: Theme[]): Theme[] =>
-  themes.map((theme) => ({
-    ...theme,
-    subtopics: theme.subtopics.map((subtopic) => ({
-      ...subtopic,
-      propositions: subtopic.propositions
-        ? subtopic.propositions.map((prop) => ({
-            ...prop,
-            audios: [...prop.audios],
-          }))
-        : null,
+  ensureExternalTheme(
+    themes.map((theme) => ({
+      ...theme,
+      subtopics: theme.subtopics.map((subtopic) => ({
+        ...subtopic,
+        propositions: subtopic.propositions
+          ? subtopic.propositions.map((prop) => ({
+              ...prop,
+              audios: [...prop.audios],
+            }))
+          : null,
+      })),
     })),
-  }))
+  )
 
 const cloneEra = (era: Era): Era => ({
   ...era,
@@ -137,7 +178,7 @@ const summarizeEra = (era: Era): EraSummary => {
   }
 }
 
-const DEFAULT_INITIAL_THEMES: Theme[] = [
+const DEFAULT_INITIAL_THEMES: Theme[] = ensureExternalTheme([
   {
     id: "theme-1",
     name: "Tema de ejemplo",
@@ -145,7 +186,7 @@ const DEFAULT_INITIAL_THEMES: Theme[] = [
       { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
     ],
   },
-]
+])
 
 const createBlankEra = (name?: string): Era => {
   const timestamp = Date.now()
@@ -155,7 +196,7 @@ const createBlankEra = (name?: string): Era => {
     createdAt: timestamp,
     updatedAt: timestamp,
     closedAt: null,
-    themes: [],
+    themes: ensureExternalTheme([]),
   }
 }
 
@@ -206,13 +247,8 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
   const updatedAt = storedEra.updatedAt ?? createdAt
   const eraId = ensureStringId(storedEra.id, createEraId())
 
-  return {
-    id: eraId,
-    name: storedEra.name ?? "Ciclo sin nombre",
-    createdAt,
-    updatedAt,
-    closedAt: storedEra.closedAt ?? null,
-    themes: (storedEra.themes ?? []).map((theme, themeIndex) => {
+  const normalizedThemes = ensureExternalTheme(
+    (storedEra.themes ?? []).map((theme, themeIndex) => {
       const themeId = ensureStringId(theme.id, `${eraId}-theme-${themeIndex}`)
 
       return {
@@ -240,6 +276,15 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
         }),
       }
     }),
+  )
+
+  return {
+    id: eraId,
+    name: storedEra.name ?? "Ciclo sin nombre",
+    createdAt,
+    updatedAt,
+    closedAt: storedEra.closedAt ?? null,
+    themes: normalizedThemes,
   }
 }
 
@@ -406,7 +451,7 @@ export default function PropositionsApp() {
 
     const newEra = createBlankEra(`Nuevo ciclo ${new Date(timestamp).toLocaleDateString()}`)
     setCurrentEra(newEra)
-    setThemes([])
+    setThemes(cloneThemes(newEra.themes))
     setCurrentThemeId(null)
     setCurrentSubtopicId(null)
     setViewState("themes")
@@ -527,7 +572,9 @@ export default function PropositionsApp() {
   const isGenerationBusy = generatingVariantId !== null || generatingPropositionId !== null
 
   const updateThemeById = (themeId: string, updater: (theme: Theme) => Theme) => {
-    setThemes((prev) => prev.map((theme) => (theme.id === themeId ? updater(theme) : theme)))
+    setThemes((prev) =>
+      ensureExternalTheme(prev.map((theme) => (theme.id === themeId ? updater(theme) : theme))),
+    )
   }
 
   const updateSubtopicById = (
@@ -907,7 +954,7 @@ export default function PropositionsApp() {
   )
 
   const deleteTheme = (themeId: string) => {
-    setThemes((prev) => prev.filter((theme) => theme.id !== themeId))
+    setThemes((prev) => ensureExternalTheme(prev.filter((theme) => theme.id !== themeId)))
     if (currentThemeId === themeId) {
       setCurrentThemeId(null)
       setCurrentSubtopicId(null)
@@ -947,29 +994,21 @@ export default function PropositionsApp() {
       (prop) => prop.id !== propositionId,
     )
 
-    setThemes((prevThemes) =>
-      prevThemes.map((theme) => {
-        if (theme.id !== currentThemeId) {
-          return theme
+    updateThemeById(currentThemeId, (theme) => ({
+      ...theme,
+      subtopics: theme.subtopics.map((subtopic) => {
+        if (subtopic.id !== currentSubtopicId || !subtopic.propositions) {
+          return subtopic
         }
+
+        const filtered = subtopic.propositions.filter((prop) => prop.id !== propositionId)
 
         return {
-          ...theme,
-          subtopics: theme.subtopics.map((subtopic) => {
-            if (subtopic.id !== currentSubtopicId || !subtopic.propositions) {
-              return subtopic
-            }
-
-            const filtered = subtopic.propositions.filter((prop) => prop.id !== propositionId)
-
-            return {
-              ...subtopic,
-              propositions: filtered.length > 0 ? filtered : [],
-            }
-          }),
+          ...subtopic,
+          propositions: filtered.length > 0 ? filtered : [],
         }
       }),
-    )
+    }))
 
     ensureStandardPropositions(currentThemeId, currentSubtopicId)
 
@@ -1846,7 +1885,7 @@ export default function PropositionsApp() {
       name: "Nuevo tema",
       subtopics: [],
     }
-    setThemes((prev) => [...prev, newTheme])
+    setThemes((prev) => ensureExternalTheme([...prev, newTheme]))
   }
 
   const updateThemeName = (id: string, name: string) => {
