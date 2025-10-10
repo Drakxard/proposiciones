@@ -7,9 +7,283 @@ import { FileQuestion, Loader2, XCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { findSubtopicInAppState, PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
-import { loadAppState } from "@/lib/storage"
+import { parseClipboardJsonWithDiagnostics } from "@/lib/clipboard"
+import { normalizeStringId } from "@/lib/utils"
+import {
+  loadAppState,
+  saveAppState,
+  type StoredAppState,
+  type StoredProposition,
+  type StoredSubtopic,
+  type StoredTheme,
+  type StoredEra,
+} from "@/lib/storage"
 
 type Status = "checking" | "redirecting" | "not-found" | "error"
+
+type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
+type PropositionKind = PropositionType | "custom"
+
+const PROPOSITION_TYPE_LABELS: Record<PropositionType, string> = {
+  condicion: "Condición",
+  reciproco: "Recíproco",
+  inverso: "Inverso",
+  contrareciproco: "Contra-Recíproco",
+}
+
+const buildDefaultLabel = (type: PropositionKind, index: number) => {
+  if (type !== "custom" && PROPOSITION_TYPE_LABELS[type]) {
+    return PROPOSITION_TYPE_LABELS[type]
+  }
+
+  return `Proposición ${index + 1}`
+}
+
+const sanitizeClipboardTextValue = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value
+  }
+
+  if (typeof value === "number" || typeof value === "bigint") {
+    return value.toString()
+  }
+
+  return value != null ? String(value) : ""
+}
+
+const toStoredPropositions = (
+  entries: any[],
+  subtopicId: string,
+): StoredProposition[] | null => {
+  if (!entries.length) {
+    return null
+  }
+
+  const idUsage = new Map<string, number>()
+
+  return entries.map((entry, index) => {
+    const rawTextValue =
+      typeof entry === "string"
+        ? entry
+        : entry?.texto ?? entry?.text ?? (typeof entry === "number" ? entry.toString() : "")
+    const textValue = sanitizeClipboardTextValue(rawTextValue)
+
+    const rawType = typeof entry?.tipo === "string" ? entry.tipo.trim().toLowerCase() : undefined
+    const normalizedType: PropositionKind =
+      rawType === "condicion" ||
+      rawType === "reciproco" ||
+      rawType === "inverso" ||
+      rawType === "contrareciproco"
+        ? (rawType as PropositionType)
+        : rawType === "custom"
+          ? "custom"
+          : "custom"
+
+    const label =
+      typeof entry?.etiqueta === "string" && entry.etiqueta.trim()
+        ? entry.etiqueta.trim()
+        : buildDefaultLabel(normalizedType, index)
+
+    const idBase =
+      normalizedType !== "custom"
+        ? `${subtopicId}-${normalizedType}`
+        : `${subtopicId}-custom-${index}`
+
+    const usageCount = idUsage.get(idBase) ?? 0
+    idUsage.set(idBase, usageCount + 1)
+
+    const propositionId = usageCount === 0 ? idBase : `${idBase}-${usageCount}`
+
+    return {
+      id: propositionId,
+      type: normalizedType,
+      label,
+      text: textValue,
+      audios: [],
+    }
+  })
+}
+
+const extractSubtopicImport = (
+  parsed: any[],
+  subtopic: StoredSubtopic,
+): { text: string; propositions: StoredProposition[] | null } | null => {
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return null
+  }
+
+  let remaining = parsed
+  let nextText = subtopic.text
+
+  const first = parsed[0]
+
+  if (
+    first &&
+    typeof first === "object" &&
+    !Array.isArray(first) &&
+    typeof first.tipo !== "string" &&
+    "texto" in first
+  ) {
+    const maybeText = sanitizeClipboardTextValue(first.texto)
+    if (maybeText.trim()) {
+      nextText = maybeText
+    }
+    remaining = parsed.slice(1)
+  }
+
+  const propositions = toStoredPropositions(remaining, subtopic.id)
+
+  return {
+    text: nextText,
+    propositions: propositions ?? subtopic.propositions ?? null,
+  }
+}
+
+const applyImportToState = (
+  state: StoredAppState,
+  match: { subtopic: StoredSubtopic; theme: StoredTheme; era: StoredEra },
+  update: { text: string; propositions: StoredProposition[] | null },
+): StoredAppState | null => {
+  const targetEraId = normalizeStringId(match.era.id)
+  const targetThemeId = normalizeStringId(match.theme.id)
+  const targetSubtopicId = normalizeStringId(match.subtopic.id)
+
+  if (!targetEraId || !targetThemeId || !targetSubtopicId) {
+    return null
+  }
+
+  const timestamp = Date.now()
+
+  const updateEra = (era: StoredEra): { era: StoredEra; updated: boolean } => {
+    let eraUpdated = false
+
+    const themes = era.themes.map((theme) => {
+      if (normalizeStringId(theme.id) !== targetThemeId) {
+        return theme
+      }
+
+      let themeUpdated = false
+
+      const subtopics = theme.subtopics.map((subtopic) => {
+        if (normalizeStringId(subtopic.id) !== targetSubtopicId) {
+          return subtopic
+        }
+
+        themeUpdated = true
+        return {
+          ...subtopic,
+          text: update.text,
+          propositions: update.propositions,
+        }
+      })
+
+      if (!themeUpdated) {
+        return theme
+      }
+
+      eraUpdated = true
+      return {
+        ...theme,
+        subtopics,
+      }
+    })
+
+    if (!eraUpdated) {
+      return { era, updated: false }
+    }
+
+    return {
+      era: {
+        ...era,
+        themes,
+        updatedAt: timestamp,
+      },
+      updated: true,
+    }
+  }
+
+  if (normalizeStringId(state.currentEra.id) === targetEraId) {
+    const { era, updated } = updateEra(state.currentEra)
+    if (updated) {
+      return {
+        ...state,
+        currentEra: era,
+      }
+    }
+  }
+
+  const history = state.eraHistory.map((era) => {
+    if (normalizeStringId(era.id) !== targetEraId) {
+      return era
+    }
+
+    const { era: updatedEra, updated } = updateEra(era)
+    return updated ? updatedEra : era
+  })
+
+  const didUpdateHistory = history.some((era, index) => era !== state.eraHistory[index])
+
+  if (didUpdateHistory) {
+    return {
+      ...state,
+      eraHistory: history,
+    }
+  }
+
+  return null
+}
+
+const maybeImportFromClipboard = async (
+  state: StoredAppState,
+  match: { subtopic: StoredSubtopic; theme: StoredTheme; era: StoredEra },
+) => {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+    console.warn("[proposicion] Clipboard API not available for automatic import")
+    return
+  }
+
+  let clipboardText = ""
+
+  try {
+    clipboardText = await navigator.clipboard.readText()
+  } catch (readError) {
+    console.warn("[proposicion] Could not read clipboard for import", readError)
+    return
+  }
+
+  if (!clipboardText.trim()) {
+    console.log("[proposicion] Clipboard is empty, skipping import")
+    return
+  }
+
+  const diagnostics = parseClipboardJsonWithDiagnostics(clipboardText)
+
+  if (!diagnostics.success || !diagnostics.parsed?.length) {
+    console.warn("[proposicion] Clipboard content is not valid for import", diagnostics.error)
+    return
+  }
+
+  const update = extractSubtopicImport(diagnostics.parsed, match.subtopic)
+
+  if (!update) {
+    return
+  }
+
+  const updatedState = applyImportToState(state, match, update)
+
+  if (!updatedState) {
+    return
+  }
+
+  try {
+    await saveAppState(updatedState)
+    console.log("[proposicion] Imported propositions from clipboard", {
+      entryCount: diagnostics.parsed.length,
+    })
+  } catch (persistError) {
+    console.error("[proposicion] Failed to persist imported propositions", persistError)
+  }
+}
 
 const PropositionRedirectPage = () => {
   const params = useParams<{ id: string }>()
@@ -62,6 +336,9 @@ const PropositionRedirectPage = () => {
           themeId: match.theme.id,
           subtopicId: match.subtopic.id,
         })
+
+        await maybeImportFromClipboard(storedState, match)
+
         window.localStorage.setItem(
           PENDING_SUBTOPIC_STORAGE_KEY,
           JSON.stringify({
