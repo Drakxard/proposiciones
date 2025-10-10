@@ -14,6 +14,8 @@ import {
   Loader2,
   RotateCcw,
   History,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -201,6 +203,41 @@ const getLabelForProposition = (type: PropositionKind, index: number) => {
   return `Proposición ${index + 1}`
 }
 
+const getPropositionGroupKey = (proposition: Proposition) => {
+  const suffix = `-${proposition.type}`
+  if (proposition.id.endsWith(suffix)) {
+    return proposition.id.slice(0, -suffix.length) || proposition.id
+  }
+  return proposition.id
+}
+
+const findConditionForProposition = (
+  subtopic: Subtopic | null,
+  proposition: Proposition,
+): Proposition | null => {
+  if (!subtopic?.propositions || !subtopic.propositions.length) {
+    return proposition.type === "condicion" ? proposition : null
+  }
+
+  if (proposition.type === "condicion") {
+    return proposition
+  }
+
+  const targetKey = getPropositionGroupKey(proposition)
+
+  const matchedCondition = subtopic.propositions.find(
+    (entry) => entry.type === "condicion" && getPropositionGroupKey(entry) === targetKey,
+  )
+
+  if (matchedCondition) {
+    return matchedCondition
+  }
+
+  return (
+    subtopic.propositions.find((entry) => entry.type === "condicion") ?? null
+  )
+}
+
 const normalizeStoredEra = (storedEra: StoredEra): Era => {
   const createdAt = storedEra.createdAt ?? Date.now()
   const updatedAt = storedEra.updatedAt ?? createdAt
@@ -284,6 +321,8 @@ export default function PropositionsApp() {
     | { scope: "proposition"; id: string }
     | null
   >(null)
+  const [expandedConditionGroups, setExpandedConditionGroups] =
+    useState<Record<string, boolean>>({})
   const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
   const [pendingExternalNavigation, setPendingExternalNavigation] = useState<
     { eraId: string; themeId: string; subtopicId: string } | null
@@ -490,7 +529,90 @@ export default function PropositionsApp() {
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
   const propositions = currentSubtopic?.propositions || []
+  const propositionIndexMap = useMemo(() => {
+    const map = new Map<string, number>()
+    propositions.forEach((prop, index) => {
+      map.set(prop.id, index)
+    })
+    return map
+  }, [propositions])
+  const conditionGroups = useMemo(() => {
+    const order: string[] = []
+    const grouped = new Map<
+      string,
+      { condition: Proposition | null; variants: Proposition[] }
+    >()
+
+    propositions.forEach((prop) => {
+      const key = getPropositionGroupKey(prop)
+      if (!grouped.has(key)) {
+        grouped.set(key, { condition: null, variants: [] })
+        order.push(key)
+      }
+
+      const entry = grouped.get(key)!
+      if (prop.type === "condicion") {
+        entry.condition = prop
+      } else {
+        entry.variants.push(prop)
+      }
+    })
+
+    return order
+      .map((key) => {
+        const entry = grouped.get(key)!
+        return {
+          key,
+          condition: entry.condition,
+          variants: entry.variants,
+        }
+      })
+      .filter(
+        (
+          group,
+        ): group is { key: string; condition: Proposition; variants: Proposition[] } =>
+          Boolean(group.condition),
+      )
+  }, [propositions])
+  const groupedPropositionIds = useMemo(() => {
+    const ids = new Set<string>()
+    conditionGroups.forEach((group) => {
+      ids.add(group.condition.id)
+      group.variants.forEach((variant) => ids.add(variant.id))
+    })
+    return ids
+  }, [conditionGroups])
+  const ungroupedPropositions = useMemo(
+    () => propositions.filter((prop) => !groupedPropositionIds.has(prop.id)),
+    [groupedPropositionIds, propositions],
+  )
   const isPracticeView = PRACTICE_VIEW_STATES.includes(viewState)
+  useEffect(() => {
+    setExpandedConditionGroups((prev) => {
+      const next: Record<string, boolean> = {}
+      let changed = false
+
+      conditionGroups.forEach((group) => {
+        const previousValue = prev[group.key] ?? false
+        next[group.key] = previousValue
+        if (prev[group.key] !== previousValue) {
+          changed = true
+        }
+      })
+
+      if (Object.keys(prev).length !== Object.keys(next).length) {
+        changed = true
+      }
+
+      return changed ? next : prev
+    })
+  }, [conditionGroups])
+  const toggleConditionGroup = (groupKey: string) => {
+    setExpandedConditionGroups((prev) => ({
+      ...prev,
+      [groupKey]: !(prev[groupKey] ?? false),
+    }))
+  }
   const hasContentAtIndex = useCallback(
     (index: number) => {
       const target = propositions[index]
@@ -557,7 +679,7 @@ export default function PropositionsApp() {
             id: existingEntry.id ?? `${subtopic.id}-${type}`,
             type,
             label,
-            text: type === "condicion" ? subtopic.text : existingEntry.text,
+            text: existingEntry.text ?? "",
             audios: [...existingEntry.audios],
           }
         }
@@ -566,7 +688,7 @@ export default function PropositionsApp() {
           id: `${subtopic.id}-${type}`,
           type,
           label,
-          text: type === "condicion" ? subtopic.text : "",
+          text: "",
           audios: [],
         }
       })
@@ -659,9 +781,7 @@ export default function PropositionsApp() {
 
     const initialIndex = subtopic.propositions
       ? subtopic.propositions.findIndex((prop) => prop.text.trim())
-      : subtopic.text.trim()
-        ? 0
-        : -1
+      : -1
 
     setCurrentThemeId(themeId)
     setCurrentSubtopicId(subtopicId)
@@ -737,7 +857,10 @@ export default function PropositionsApp() {
       return
     }
 
-    if (!currentSubtopic.text.trim()) {
+    const conditionForVariant = findConditionForProposition(currentSubtopic, proposition)
+    const conditionText = conditionForVariant?.text ?? ""
+
+    if (!conditionText.trim()) {
       alert("Agrega una condición antes de generar nuevas proposiciones.")
       return
     }
@@ -749,7 +872,7 @@ export default function PropositionsApp() {
 
     try {
       const result = await generatePropositionVariant(
-        currentSubtopic.text,
+        conditionText,
         variantType,
         model,
         promptTemplate,
@@ -1959,25 +2082,10 @@ export default function PropositionsApp() {
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
-    updateSubtopicById(currentThemeId, id, (subtopic) => {
-      const updated: Subtopic = {
-        ...subtopic,
-        text,
-      }
-
-      if (subtopic.propositions) {
-        updated.propositions = subtopic.propositions.map((prop) =>
-          prop.type === "condicion"
-            ? {
-                ...prop,
-                text,
-              }
-            : prop,
-        )
-      }
-
-      return updated
-    })
+    updateSubtopicById(currentThemeId, id, (subtopic) => ({
+      ...subtopic,
+      text,
+    }))
   }
 
   const openSubtopicDetail = (subtopicId: string) => {
@@ -1994,9 +2102,7 @@ export default function PropositionsApp() {
 
     const initialIndex = subtopic.propositions
       ? subtopic.propositions.findIndex((prop) => prop.text.trim())
-      : subtopic.text.trim()
-        ? 0
-        : -1
+      : -1
 
     setCurrentSubtopicId(subtopicId)
     setCurrentIndex(initialIndex >= 0 ? initialIndex : 0)
@@ -2255,10 +2361,8 @@ export default function PropositionsApp() {
       return
     }
 
-    const conditionText =
-      currentSubtopic.text ||
-      currentSubtopic.propositions?.find((prop) => prop.type === "condicion")?.text ||
-      ""
+    const conditionForTarget = findConditionForProposition(currentSubtopic, target)
+    const conditionText = conditionForTarget?.text ?? ""
 
     if (target.type === "condicion") {
       alert("Edita la condición directamente en el campo principal.")
@@ -2512,14 +2616,6 @@ export default function PropositionsApp() {
               />
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={importSubtopicFromClipboard}
-                title="Importar subtema desde portapapeles"
-              >
-                <Plus className="w-5 h-5" />
-              </Button>
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
                 <Settings className="w-5 h-5" />
               </Button>
@@ -2531,11 +2627,11 @@ export default function PropositionsApp() {
               <p className="text-muted-foreground">Cargando datos...</p>
             </Card>
           ) : subtopics.length === 0 ? (
-            <Card className="p-12 text-center space-y-4">
-              <p className="text-muted-foreground">
-                Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles.
-              </p>
-            </Card>
+              <Card className="p-12 text-center space-y-4">
+                <p className="text-muted-foreground">
+                  Este tema aún no tiene subtemas. Abre un subtema y usa el botón [+] de su vista para importar desde el portapapeles.
+                </p>
+              </Card>
           ) : (
             <Card className="p-6 space-y-4">
               {subtopics.map((subtopic) => {
@@ -2555,7 +2651,7 @@ export default function PropositionsApp() {
                       value={subtopic.text}
                       onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
                       onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                      placeholder="Ingresa una condición o teorema..."
+                      placeholder="Ingresa el nombre del subtema..."
                       className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <Button
@@ -2624,6 +2720,30 @@ export default function PropositionsApp() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1 w-full">
+              <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                Subtema
+              </p>
+              <input
+                type="text"
+                value={currentSubtopic.text}
+                onChange={(event) => updateSubtopicText(currentSubtopic.id, event.target.value)}
+                placeholder="Subtema sin nombre"
+                className="w-full bg-transparent text-3xl font-bold focus:outline-none"
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={importSubtopicFromClipboard}
+              title="Importar subtema desde portapapeles"
+              className="self-start"
+            >
+              <Plus className="w-5 h-5" />
+            </Button>
+          </div>
+
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
@@ -2635,144 +2755,416 @@ export default function PropositionsApp() {
             </Card>
           ) : (
             <>
-              <Card className="p-8 space-y-6">
-                {propositions.map((prop, index) => {
-                  const isSelected = focusedItem?.scope === "proposition" && focusedItem.id === prop.id
-                  const hasContent = prop.text.trim().length > 0
-                  const isStandardVariant =
-                    prop.type !== "custom" && prop.type !== "condicion"
+              <Card className="overflow-hidden">
+                {conditionGroups.map((group, groupIndex) => {
+                  const condition = group.condition
+                  const isExpanded = expandedConditionGroups[group.key] ?? false
+                  const isSelected =
+                    focusedItem?.scope === "proposition" && focusedItem.id === condition.id
+                  const hasContent = condition.text.trim().length > 0
+                  const conditionIndex = propositionIndexMap.get(condition.id) ?? -1
 
                   return (
-                    <div
-                      key={prop.id}
-                      className={`p-6 rounded-lg transition-colors space-y-4 ${
-                        isSelected ? "bg-primary/10" : "hover:bg-muted/50"
-                      }`}
-                      onMouseEnter={() => setFocusedItem({ scope: "proposition", id: prop.id })}
-                      onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
-                      tabIndex={0}
-                    >
-                    <div className="flex items-start justify-between gap-6">
-                      <div className="flex-1 space-y-2">
-                        <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-                          {prop.label}
-                        </p>
-                        <div className="text-lg leading-relaxed text-foreground break-words">
-                          {hasContent ? (
-                            <MathText text={prop.text} />
-                          ) : (
-                            <p className="text-sm italic text-muted-foreground">
-                              Aún no has generado esta proposición.
+                    <div key={group.key} className={groupIndex === 0 ? "" : "border-t"}>
+                      <div
+                        className={`flex flex-col gap-4 p-6 transition-colors ${
+                          isSelected ? "bg-primary/10" : "hover:bg-muted/50"
+                        }`}
+                        onMouseEnter={() => setFocusedItem({ scope: "proposition", id: condition.id })}
+                        onFocus={() => setFocusedItem({ scope: "proposition", id: condition.id })}
+                        tabIndex={0}
+                      >
+                        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                          <div className="flex flex-1 items-start gap-3">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => toggleConditionGroup(group.key)}
+                              className="mt-1"
+                              title={isExpanded ? "Ocultar variantes" : "Mostrar variantes"}
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="w-5 h-5" />
+                              ) : (
+                                <ChevronDown className="w-5 h-5" />
+                              )}
+                            </Button>
+                            <div className="space-y-2">
+                              <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                                {`Condición ${groupIndex + 1}`}
+                              </p>
+                              <div className="text-lg leading-relaxed text-foreground break-words">
+                                {hasContent ? (
+                                  <MathText text={condition.text} />
+                                ) : (
+                                  <p className="text-sm italic text-muted-foreground">
+                                    Agrega el enunciado de la condición.
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {condition.audios.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  if (conditionIndex >= 0) {
+                                    playRecordedAudio(conditionIndex)
+                                  }
+                                }}
+                                className="hover:bg-primary/10"
+                                title="Reproducir último audio"
+                                disabled={conditionIndex < 0}
+                              >
+                                <Play className="w-5 h-5" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                if (conditionIndex >= 0) {
+                                  goToProposition(conditionIndex)
+                                }
+                              }}
+                              className="hover:bg-primary/10"
+                              title="Practicar esta condición"
+                              disabled={conditionIndex < 0 || !hasContent}
+                            >
+                              <Headphones className="w-5 h-5" />
+                            </Button>
+                          </div>
+                        </div>
+                        {rewritePreview && rewritePreview.propositionId === condition.id && (
+                          <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                            <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                              Previsualización
                             </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isStandardVariant && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => generateVariantForSubtopic(prop)}
-                            disabled={
-                              generatingVariantId === prop.id ||
-                              generatingPropositionId !== null ||
-                              isRecording
-                            }
-                            className="whitespace-nowrap"
-                          >
-                            {generatingVariantId === prop.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                              </>
-                            ) : hasContent ? (
-                              "Regenerar"
-                            ) : (
-                              "Generar"
-                            )}
-                          </Button>
+                            <div className="text-base leading-relaxed text-foreground break-words">
+                              <MathText text={rewritePreview.text} />
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button size="sm" onClick={confirmRewritePreview}>
+                                Confirmar
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                                Reintentar
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
                         )}
-                        {prop.type === "custom" && currentSubtopic && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
-                            disabled={
-                              generatingPropositionId === prop.id ||
-                              isVariantGenerationActive ||
-                              isRecording
-                            }
-                            className="whitespace-nowrap"
-                          >
-                            {generatingPropositionId === prop.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
-                              </>
-                            ) : (
-                              "Generar variantes"
-                            )}
-                          </Button>
-                        )}
-                        {prop.audios.length > 0 && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => playRecordedAudio(index)}
-                            className="hover:bg-primary/10"
-                            title="Reproducir último audio"
-                          >
-                            <Play className="w-5 h-5" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRewriteProposition(prop)}
-                          className="hover:bg-primary/10"
-                          title="Rehacer esta proposición"
-                          disabled={rewritingPropositionId === prop.id || !hasContent}
-                        >
-                          {rewritingPropositionId === prop.id ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <RotateCcw className="w-5 h-5" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => goToProposition(index)}
-                          className="hover:bg-primary/10"
-                          title="Practicar esta proposición"
-                          disabled={!hasContent}
-                        >
-                          <Headphones className="w-5 h-5" />
-                        </Button>
                       </div>
-                    </div>
-                    {rewritePreview && rewritePreview.propositionId === prop.id && (
-                      <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
-                        <p className="text-sm font-medium text-primary uppercase tracking-wide">
-                          Previsualización
-                        </p>
-                        <div className="text-base leading-relaxed text-foreground break-words">
-                          <MathText text={rewritePreview.text} />
+                      {isExpanded && group.variants.length ? (
+                        <div className="border-t divide-y">
+                          {group.variants.map((variant) => {
+                            const variantIndex = propositionIndexMap.get(variant.id) ?? -1
+                            const variantSelected =
+                              focusedItem?.scope === "proposition" && focusedItem.id === variant.id
+                            const hasVariantContent = variant.text.trim().length > 0
+                            const isStandardVariant =
+                              variant.type !== "custom" && variant.type !== "condicion"
+
+                            return (
+                              <div
+                                key={variant.id}
+                                className={`p-6 transition-colors space-y-4 ${
+                                  variantSelected ? "bg-primary/10" : "hover:bg-muted/40"
+                                }`}
+                                onMouseEnter={() => setFocusedItem({ scope: "proposition", id: variant.id })}
+                                onFocus={() => setFocusedItem({ scope: "proposition", id: variant.id })}
+                                tabIndex={0}
+                              >
+                                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                  <div className="flex-1 space-y-2">
+                                    <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                                      {variant.label}
+                                    </p>
+                                    <div className="text-lg leading-relaxed text-foreground break-words">
+                                      {hasVariantContent ? (
+                                        <MathText text={variant.text} />
+                                      ) : (
+                                        <p className="text-sm italic text-muted-foreground">
+                                          Aún no has generado esta proposición.
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    {isStandardVariant && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => generateVariantForSubtopic(variant)}
+                                        disabled={
+                                          generatingVariantId === variant.id ||
+                                          generatingPropositionId !== null ||
+                                          isRecording
+                                        }
+                                        className="whitespace-nowrap"
+                                      >
+                                        {generatingVariantId === variant.id ? (
+                                          <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                          </>
+                                        ) : hasVariantContent ? (
+                                          "Regenerar"
+                                        ) : (
+                                          "Generar"
+                                        )}
+                                      </Button>
+                                    )}
+                                    {variant.type === "custom" && currentSubtopic && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => expandCustomProposition(currentSubtopic.id, variant.id)}
+                                        disabled={
+                                          generatingPropositionId === variant.id ||
+                                          isVariantGenerationActive ||
+                                          isRecording
+                                        }
+                                        className="whitespace-nowrap"
+                                      >
+                                        {generatingPropositionId === variant.id ? (
+                                          <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                          </>
+                                        ) : (
+                                          "Generar variantes"
+                                        )}
+                                      </Button>
+                                    )}
+                                    {variant.audios.length > 0 && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => {
+                                          if (variantIndex >= 0) {
+                                            playRecordedAudio(variantIndex)
+                                          }
+                                        }}
+                                        className="hover:bg-primary/10"
+                                        title="Reproducir último audio"
+                                        disabled={variantIndex < 0}
+                                      >
+                                        <Play className="w-5 h-5" />
+                                      </Button>
+                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleRewriteProposition(variant)}
+                                      className="hover:bg-primary/10"
+                                      title="Rehacer esta proposición"
+                                      disabled={rewritingPropositionId === variant.id || !hasVariantContent}
+                                    >
+                                      {rewritingPropositionId === variant.id ? (
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                      ) : (
+                                        <RotateCcw className="w-5 h-5" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => {
+                                        if (variantIndex >= 0) {
+                                          goToProposition(variantIndex)
+                                        }
+                                      }}
+                                      className="hover:bg-primary/10"
+                                      title="Practicar esta proposición"
+                                      disabled={variantIndex < 0 || !hasVariantContent}
+                                    >
+                                      <Headphones className="w-5 h-5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                {rewritePreview && rewritePreview.propositionId === variant.id && (
+                                  <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                                    <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                                      Previsualización
+                                    </p>
+                                    <div className="text-base leading-relaxed text-foreground break-words">
+                                      <MathText text={rewritePreview.text} />
+                                    </div>
+                                    <div className="flex flex-wrap justify-end gap-2">
+                                      <Button size="sm" onClick={confirmRewritePreview}>
+                                        Confirmar
+                                      </Button>
+                                      <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                                        Reintentar
+                                      </Button>
+                                      <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                                        Cancelar
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
                         </div>
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button size="sm" onClick={confirmRewritePreview}>
-                            Confirmar
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={retryRewritePreview}>
-                            Reintentar
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
-                            Cancelar
-                          </Button>
-                        </div>
-                      </div>
-                    )}
+                      ) : null}
                     </div>
                   )
                 })}
+                {ungroupedPropositions.length ? (
+                  <div className={conditionGroups.length ? "border-t" : ""}>
+                    {ungroupedPropositions.map((prop) => {
+                      const index = propositionIndexMap.get(prop.id) ?? -1
+                      const isSelected =
+                        focusedItem?.scope === "proposition" && focusedItem.id === prop.id
+                      const hasContent = prop.text.trim().length > 0
+                      const isStandardVariant = prop.type !== "custom" && prop.type !== "condicion"
+
+                      return (
+                        <div
+                          key={prop.id}
+                          className={`p-6 transition-colors space-y-4 ${
+                            isSelected ? "bg-primary/10" : "hover:bg-muted/40"
+                          }`}
+                          onMouseEnter={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                          onFocus={() => setFocusedItem({ scope: "proposition", id: prop.id })}
+                          tabIndex={0}
+                        >
+                          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                            <div className="flex-1 space-y-2">
+                              <p className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                                {prop.label}
+                              </p>
+                              <div className="text-lg leading-relaxed text-foreground break-words">
+                                {hasContent ? (
+                                  <MathText text={prop.text} />
+                                ) : (
+                                  <p className="text-sm italic text-muted-foreground">
+                                    Aún no has generado esta proposición.
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {isStandardVariant && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => generateVariantForSubtopic(prop)}
+                                  disabled={
+                                    generatingVariantId === prop.id ||
+                                    generatingPropositionId !== null ||
+                                    isRecording
+                                  }
+                                  className="whitespace-nowrap"
+                                >
+                                  {generatingVariantId === prop.id ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                    </>
+                                  ) : hasContent ? (
+                                    "Regenerar"
+                                  ) : (
+                                    "Generar"
+                                  )}
+                                </Button>
+                              )}
+                              {prop.type === "custom" && currentSubtopic && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => expandCustomProposition(currentSubtopic.id, prop.id)}
+                                  disabled={
+                                    generatingPropositionId === prop.id ||
+                                    isVariantGenerationActive ||
+                                    isRecording
+                                  }
+                                  className="whitespace-nowrap"
+                                >
+                                  {generatingPropositionId === prop.id ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generando...
+                                    </>
+                                  ) : (
+                                    "Generar variantes"
+                                  )}
+                                </Button>
+                              )}
+                              {prop.audios.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    if (index >= 0) {
+                                      playRecordedAudio(index)
+                                    }
+                                  }}
+                                  className="hover:bg-primary/10"
+                                  title="Reproducir último audio"
+                                  disabled={index < 0}
+                                >
+                                  <Play className="w-5 h-5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleRewriteProposition(prop)}
+                                className="hover:bg-primary/10"
+                                title="Rehacer esta proposición"
+                                disabled={rewritingPropositionId === prop.id || !hasContent}
+                              >
+                                {rewritingPropositionId === prop.id ? (
+                                  <Loader2 className="w-5 h-5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="w-5 h-5" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  if (index >= 0) {
+                                    goToProposition(index)
+                                  }
+                                }}
+                                className="hover:bg-primary/10"
+                                title="Practicar esta proposición"
+                                disabled={index < 0 || !hasContent}
+                              >
+                                <Headphones className="w-5 h-5" />
+                              </Button>
+                            </div>
+                          </div>
+                          {rewritePreview && rewritePreview.propositionId === prop.id && (
+                            <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                              <p className="text-sm font-medium text-primary uppercase tracking-wide">
+                                Previsualización
+                              </p>
+                              <div className="text-base leading-relaxed text-foreground break-words">
+                                <MathText text={rewritePreview.text} />
+                              </div>
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button size="sm" onClick={confirmRewritePreview}>
+                                  Confirmar
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={retryRewritePreview}>
+                                  Reintentar
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={cancelRewritePreview}>
+                                  Cancelar
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
               </Card>
               <p className="text-center text-sm text-muted-foreground">
                 Presiona la barra espaciadora para iniciar la práctica.
