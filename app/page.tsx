@@ -276,6 +276,7 @@ export default function PropositionsApp() {
     { eraId: string; themeId: string; subtopicId: string } | null
   >(null)
   const hasTriedExternalNavigationRefresh = useRef(false)
+  const hasRefreshedForPendingExternalNavigation = useRef(false)
 
   // 👇 de main
   const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
@@ -345,6 +346,26 @@ export default function PropositionsApp() {
       console.warn("[v0] No se pudo procesar la navegación externa pendiente:", error)
     }
   }, [isLoadingData])
+
+  useEffect(() => {
+    if (!pendingExternalNavigation) {
+      hasRefreshedForPendingExternalNavigation.current = false
+      return
+    }
+
+    if (isLoadingData) {
+      return
+    }
+
+    if (!hasRefreshedForPendingExternalNavigation.current) {
+      hasRefreshedForPendingExternalNavigation.current = true
+      void refreshAppStateForExternalNavigation()
+    }
+  }, [
+    pendingExternalNavigation,
+    isLoadingData,
+    refreshAppStateForExternalNavigation,
+  ])
 
   const buildStoredAppState = (): StoredAppState => ({
     currentEra: cloneEra({ ...currentEra, themes: cloneThemes(themes) }) as StoredEra,
