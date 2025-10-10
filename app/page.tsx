@@ -34,7 +34,7 @@ import {
   type StoredAppState,
   type StoredEra,
 } from "@/lib/storage"
-import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
+import { EXTERNAL_THEME_ID, PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
 import { ensureStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
@@ -516,6 +516,7 @@ export default function PropositionsApp() {
   const historySummaries = useMemo(() => eraHistory.map(summarizeEra), [eraHistory])
 
   const currentTheme = currentThemeId ? themes.find((t) => t.id === currentThemeId) ?? null : null
+  const isExternalTheme = currentTheme?.id === EXTERNAL_THEME_ID
   const subtopics = currentTheme?.subtopics ?? []
   const currentSubtopic =
     currentSubtopicId && currentTheme
@@ -2051,6 +2052,11 @@ export default function PropositionsApp() {
   const updateSubtopicTitle = (id: string, title: string) => {
     if (!currentThemeId) return
 
+    const theme = themes.find((item) => item.id === currentThemeId)
+    if (theme?.id === EXTERNAL_THEME_ID) {
+      return
+    }
+
     updateSubtopicById(currentThemeId, id, (subtopic) => ({
       ...subtopic,
       title,
@@ -2655,11 +2661,22 @@ export default function PropositionsApp() {
                       <input
                         type="text"
                         value={subtopic.title ?? ""}
-                        onChange={(e) => updateSubtopicTitle(subtopic.id, e.target.value)}
+                        onChange={
+                          isExternalTheme
+                            ? undefined
+                            : (e) => updateSubtopicTitle(subtopic.id, e.target.value)
+                        }
                         onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                         placeholder="Nombre del subtema (opcional)"
                         className="w-full px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
                         autoComplete="off"
+                        readOnly={isExternalTheme}
+                        aria-readonly={isExternalTheme}
+                        title={
+                          isExternalTheme
+                            ? "Este subtema proviene de una proposición externa y su nombre no se puede editar."
+                            : undefined
+                        }
                       />
                       <input
                         type="text"
