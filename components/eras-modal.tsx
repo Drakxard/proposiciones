@@ -1,6 +1,12 @@
 "use client"
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { formatDistanceToNow } from "date-fns"
 import { es } from "date-fns/locale"
@@ -56,6 +62,10 @@ export function ErasModal({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Historial de ciclos</DialogTitle>
+          <DialogDescription>
+            Consulta los ciclos anteriores, vuelve a abrirlos o renómbralos para mantener tu
+            organización al día.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">

@@ -549,20 +549,26 @@ export default function PropositionsApp() {
   }
 
   useEffect(() => {
-    if (!pendingExternalNavigation) {
+    if (!pendingExternalNavigation || isLoadingData) {
       return
     }
 
     const { eraId, themeId, subtopicId } = pendingExternalNavigation
 
-    const requestRefresh = () => {
-      if (hasTriedExternalNavigationRefresh.current) {
-        return false
-      }
-
+    if (!hasTriedExternalNavigationRefresh.current) {
       hasTriedExternalNavigationRefresh.current = true
-      void refreshAppStateForExternalNavigation()
-      return true
+      void (async () => {
+        try {
+          await refreshAppStateForExternalNavigation()
+        } catch (error) {
+          console.error(
+            "[v0] Error refreshing state before external navigation:",
+            error,
+          )
+          hasTriedExternalNavigationRefresh.current = false
+        }
+      })()
+      return
     }
 
     if (eraId !== currentEra.id) {
@@ -570,9 +576,6 @@ export default function PropositionsApp() {
 
       if (!targetEra) {
         console.warn("[v0] No se encontró el ciclo solicitado para la navegación externa:", eraId)
-        if (requestRefresh()) {
-          return
-        }
 
         hasTriedExternalNavigationRefresh.current = false
         setPendingExternalNavigation(null)
@@ -599,9 +602,6 @@ export default function PropositionsApp() {
 
     if (!theme) {
       console.warn("[v0] No se encontró el tema solicitado para la navegación externa:", themeId)
-      if (requestRefresh()) {
-        return
-      }
 
       hasTriedExternalNavigationRefresh.current = false
       setPendingExternalNavigation(null)
@@ -612,9 +612,6 @@ export default function PropositionsApp() {
 
     if (!subtopic) {
       console.warn("[v0] No se encontró el subtema solicitado para la navegación externa:", subtopicId)
-      if (requestRefresh()) {
-        return
-      }
 
       hasTriedExternalNavigationRefresh.current = false
       setPendingExternalNavigation(null)
@@ -643,6 +640,7 @@ export default function PropositionsApp() {
     eraHistory,
     themes,
     ensureStandardPropositions,
+    isLoadingData,
     refreshAppStateForExternalNavigation,
   ])
 

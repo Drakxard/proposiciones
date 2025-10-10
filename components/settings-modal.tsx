@@ -1,7 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -136,6 +142,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Ajustes de Groq</DialogTitle>
+          <DialogDescription>
+            Configura el modelo y personaliza los prompts utilizados para generar variaciones de
+            las proposiciones.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">
