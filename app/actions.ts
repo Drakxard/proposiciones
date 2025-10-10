@@ -58,6 +58,37 @@ const formatVariantPrompt = (
   return prompt
 }
 
+type GroqTextPart = { text: string }
+
+const isGroqTextPart = (value: unknown): value is GroqTextPart => {
+  return Boolean(value && typeof value === "object" && "text" in value && typeof (value as any).text === "string")
+}
+
+const extractGroqContent = (content: unknown): string | null => {
+  if (typeof content === "string") {
+    return content
+  }
+
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((part) => {
+        if (!part) return ""
+        if (typeof part === "string") return part
+        if (isGroqTextPart(part)) return part.text
+        return ""
+      })
+      .filter(Boolean)
+
+    return parts.length > 0 ? parts.join("") : null
+  }
+
+  if (isGroqTextPart(content)) {
+    return content.text
+  }
+
+  return null
+}
+
 export async function generatePropositionVariant(
   condition: string,
   variant: PropositionVariant,
@@ -112,7 +143,7 @@ export async function generatePropositionVariant(
     }
 
     const data = await response.json()
-    const text = data.choices?.[0]?.message?.content
+    const text = extractGroqContent(data.choices?.[0]?.message?.content)
 
     if (!text) {
       return { error: "Respuesta vacía de Groq" }
@@ -191,7 +222,7 @@ export async function rewriteProposition(
     }
 
     const data = await response.json()
-    const text = data.choices?.[0]?.message?.content
+    const text = extractGroqContent(data.choices?.[0]?.message?.content)
 
     if (!text) {
       return { error: "Respuesta vacía de Groq" }
