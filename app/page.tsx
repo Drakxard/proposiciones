@@ -275,6 +275,7 @@ export default function PropositionsApp() {
   const [pendingExternalNavigation, setPendingExternalNavigation] = useState<
     { eraId: string; themeId: string; subtopicId: string } | null
   >(null)
+  const hasTriedExternalNavigationRefresh = useRef(false)
 
   // 👇 de main
   const [rewritingPropositionId, setRewritingPropositionId] = useState<string | null>(null)
@@ -286,6 +287,26 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+
+  const applyStoredAppState = useCallback((state: StoredAppState) => {
+    const normalizedCurrent = normalizeStoredEra(state.currentEra)
+    const normalizedHistory = (state.eraHistory ?? []).map(normalizeStoredEra)
+
+    setCurrentEra(normalizedCurrent)
+    setThemes(cloneThemes(normalizedCurrent.themes))
+    setEraHistory(normalizedHistory)
+  }, [])
+
+  const refreshAppStateForExternalNavigation = useCallback(async () => {
+    try {
+      const storedState = await loadAppState()
+      if (storedState) {
+        applyStoredAppState(storedState)
+      }
+    } catch (refreshError) {
+      console.error("[v0] Error refreshing app state for external navigation:", refreshError)
+    }
+  }, [applyStoredAppState])
 
   useEffect(() => {
     if (isLoadingData) {
@@ -314,6 +335,7 @@ export default function PropositionsApp() {
         return
       }
 
+      hasTriedExternalNavigationRefresh.current = false
       setPendingExternalNavigation({
         eraId: parsed.eraId,
         themeId: parsed.themeId,
@@ -323,15 +345,6 @@ export default function PropositionsApp() {
       console.warn("[v0] No se pudo procesar la navegación externa pendiente:", error)
     }
   }, [isLoadingData])
-
-  const applyStoredAppState = (state: StoredAppState) => {
-    const normalizedCurrent = normalizeStoredEra(state.currentEra)
-    const normalizedHistory = (state.eraHistory ?? []).map(normalizeStoredEra)
-
-    setCurrentEra(normalizedCurrent)
-    setThemes(cloneThemes(normalizedCurrent.themes))
-    setEraHistory(normalizedHistory)
-  }
 
   const buildStoredAppState = (): StoredAppState => ({
     currentEra: cloneEra({ ...currentEra, themes: cloneThemes(themes) }) as StoredEra,
@@ -542,11 +555,26 @@ export default function PropositionsApp() {
 
     const { eraId, themeId, subtopicId } = pendingExternalNavigation
 
+    const requestRefresh = () => {
+      if (hasTriedExternalNavigationRefresh.current) {
+        return false
+      }
+
+      hasTriedExternalNavigationRefresh.current = true
+      void refreshAppStateForExternalNavigation()
+      return true
+    }
+
     if (eraId !== currentEra.id) {
       const targetEra = eraHistory.find((era) => era.id === eraId)
 
       if (!targetEra) {
         console.warn("[v0] No se encontró el ciclo solicitado para la navegación externa:", eraId)
+        if (requestRefresh()) {
+          return
+        }
+
+        hasTriedExternalNavigationRefresh.current = false
         setPendingExternalNavigation(null)
         return
       }
@@ -571,6 +599,11 @@ export default function PropositionsApp() {
 
     if (!theme) {
       console.warn("[v0] No se encontró el tema solicitado para la navegación externa:", themeId)
+      if (requestRefresh()) {
+        return
+      }
+
+      hasTriedExternalNavigationRefresh.current = false
       setPendingExternalNavigation(null)
       return
     }
@@ -579,6 +612,11 @@ export default function PropositionsApp() {
 
     if (!subtopic) {
       console.warn("[v0] No se encontró el subtema solicitado para la navegación externa:", subtopicId)
+      if (requestRefresh()) {
+        return
+      }
+
+      hasTriedExternalNavigationRefresh.current = false
       setPendingExternalNavigation(null)
       return
     }
@@ -597,6 +635,7 @@ export default function PropositionsApp() {
     setPendingPracticeIndex(null)
     setViewState("overview")
 
+    hasTriedExternalNavigationRefresh.current = false
     setPendingExternalNavigation(null)
   }, [
     pendingExternalNavigation,
@@ -604,6 +643,7 @@ export default function PropositionsApp() {
     eraHistory,
     themes,
     ensureStandardPropositions,
+    refreshAppStateForExternalNavigation,
   ])
 
   const getGroqSettings = (): {

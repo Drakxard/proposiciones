@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
-import { CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { useParams, useRouter } from "next/navigation"
+import { Loader2, XCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { loadAppState, saveAppState } from "@/lib/storage"
@@ -13,16 +13,16 @@ import {
   upsertExternalSubtopic,
 } from "@/lib/external-subtopics"
 
-type Status = "initializing" | "success" | "error"
+type Status = "initializing" | "redirecting" | "error"
 
 const CreateSubtopicPage = () => {
   const [status, setStatus] = useState<Status>("initializing")
   const [error, setError] = useState<string | null>(null)
   const [subtopicId, setSubtopicId] = useState<string | null>(null)
-  const [subtopicName, setSubtopicName] = useState<string | null>(null)
 
   const params = useParams<{ payload: string }>()
   const payload = params?.payload ?? ""
+  const router = useRouter()
 
   const propositionUrl = useMemo(() => {
     if (!subtopicId) return "#"
@@ -41,7 +41,6 @@ const CreateSubtopicPage = () => {
     }
 
     setSubtopicId(parsed.id)
-    setSubtopicName(parsed.name)
 
     let cancelled = false
 
@@ -54,7 +53,8 @@ const CreateSubtopicPage = () => {
         await saveAppState(updated)
 
         if (!cancelled) {
-          setStatus("success")
+          setStatus("redirecting")
+          router.replace(`/proposicion/${encodeURIComponent(parsed.id)}`)
         }
       } catch (persistError) {
         console.error("[nuevaproposicion] Error creating subtopic", persistError)
@@ -70,7 +70,7 @@ const CreateSubtopicPage = () => {
     return () => {
       cancelled = true
     }
-  }, [payload])
+  }, [payload, router])
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-10 text-center">
@@ -87,31 +87,21 @@ const CreateSubtopicPage = () => {
         </div>
       ) : null}
 
-      {status === "success" ? (
+      {status === "redirecting" ? (
         <div className="flex flex-col items-center gap-4">
-          <CheckCircle2 className="h-12 w-12 text-emerald-500" />
-          <div className="space-y-3">
-            <h1 className="text-2xl font-semibold">¡Subtema listo!</h1>
-            <div className="space-y-1 text-muted-foreground">
-              <p>
-                Se creó el subtema <span className="font-medium text-foreground">{subtopicName}</span>
-                {" "}
-                con el identificador <span className="font-mono text-foreground">{subtopicId}</span>.
-              </p>
-              <p>
-                Puedes abrirlo ahora mismo o regresar a la aplicación principal para completarlo con
-                más detalles.
-              </p>
-            </div>
+          <Loader2 className="h-12 w-12 animate-spin text-muted-foreground" />
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold">Abriendo la proposición…</h1>
+            <p className="max-w-lg text-balance text-muted-foreground">
+              Estamos redirigiéndote a la nueva proposición. Si no ocurre automáticamente, puedes
+              abrirla manualmente a continuación.
+            </p>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          {subtopicId ? (
             <Button asChild>
-              <Link href={propositionUrl}>Ir a la proposición</Link>
+              <Link href={propositionUrl}>Abrir manualmente</Link>
             </Button>
-            <Button asChild variant="outline">
-              <Link href="/">Abrir la aplicación</Link>
-            </Button>
-          </div>
+          ) : null}
         </div>
       ) : null}
 
