@@ -62,6 +62,7 @@ interface Subtopic {
   id: string
   text: string
   propositions: Proposition[] | null
+  title?: string
 }
 
 interface Theme {
@@ -142,7 +143,12 @@ const DEFAULT_INITIAL_THEMES: Theme[] = [
     id: "theme-1",
     name: "Tema de ejemplo",
     subtopics: [
-      { id: "1", text: "Si es Derivable entonces es Continuo", propositions: null },
+      {
+        id: "1",
+        text: "Si es Derivable entonces es Continuo",
+        title: "Si es Derivable entonces es Continuo",
+        propositions: null,
+      },
     ],
   },
 ]
@@ -224,14 +230,15 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
             `${themeId}-subtopic-${subIndex}`,
           )
 
-          return {
-            id: subtopicId,
-            text: subtopic.text ?? "",
-            propositions: subtopic.propositions
-              ? subtopic.propositions.map((prop, propIndex) => ({
-                  id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
-                  type: (prop.type ?? "custom") as PropositionKind,
-                  label: prop.label ?? `Proposición ${propIndex + 1}`,
+        return {
+          id: subtopicId,
+          text: subtopic.text ?? "",
+          title: subtopic.title ?? undefined,
+          propositions: subtopic.propositions
+            ? subtopic.propositions.map((prop, propIndex) => ({
+                id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
+                type: (prop.type ?? "custom") as PropositionKind,
+                label: prop.label ?? `Proposición ${propIndex + 1}`,
                   text: prop.text ?? "",
                   audios: prop.audios ? [...prop.audios] : [],
                 }))
@@ -286,7 +293,7 @@ export default function PropositionsApp() {
   >(null)
   const [pendingPracticeIndex, setPendingPracticeIndex] = useState<number | null>(null)
   const [pendingExternalNavigation, setPendingExternalNavigation] = useState<
-    { eraId: string; themeId: string; subtopicId: string } | null
+    { eraId: string; themeId: string; subtopicId: string; title?: string } | null
   >(null)
   const hasTriedExternalNavigationRefresh = useRef(false)
   const hasRefreshedForPendingExternalNavigation = useRef(false)
@@ -343,6 +350,7 @@ export default function PropositionsApp() {
         eraId?: string
         themeId?: string
         subtopicId?: string
+        title?: string
       } | null
 
       if (!parsed?.eraId || !parsed.themeId || !parsed.subtopicId) {
@@ -354,6 +362,7 @@ export default function PropositionsApp() {
         eraId: parsed.eraId,
         themeId: parsed.themeId,
         subtopicId: parsed.subtopicId,
+        title: typeof parsed.title === "string" ? parsed.title : undefined,
       })
     } catch (error) {
       console.warn("[v0] No se pudo procesar la navegación externa pendiente:", error)
@@ -655,6 +664,13 @@ export default function PropositionsApp() {
       return
     }
 
+    if (pendingExternalNavigation.title?.trim()) {
+      updateSubtopicById(themeId, subtopicId, (current) => ({
+        ...current,
+        title: pendingExternalNavigation.title,
+      }))
+    }
+
     ensureStandardPropositions(themeId, subtopicId)
 
     const initialIndex = subtopic.propositions
@@ -847,6 +863,10 @@ export default function PropositionsApp() {
           {
             id: newSubtopicId,
             text: subtopicInfo.texto,
+            title:
+              typeof subtopicInfo.titulo === "string" && subtopicInfo.titulo.trim().length > 0
+                ? subtopicInfo.titulo
+                : subtopicInfo.texto,
             propositions,
           },
         ],
@@ -1948,6 +1968,7 @@ export default function PropositionsApp() {
       id: Date.now().toString(),
       text: "",
       propositions: null,
+      title: "",
     }
 
     updateThemeById(currentThemeId, (theme) => ({
@@ -2550,14 +2571,25 @@ export default function PropositionsApp() {
                     onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                     tabIndex={0}
                   >
-                    <input
-                      type="text"
-                      value={subtopic.text}
-                      onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                      onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                      placeholder="Ingresa una condición o teorema..."
-                      className="flex-1 px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
+                    <div className="flex-1 space-y-1">
+                      {subtopic.title ? (
+                        <p className="px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {subtopic.title}
+                        </p>
+                      ) : null}
+                      <input
+                        type="text"
+                        value={subtopic.text}
+                        onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
+                        onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                        placeholder={
+                          subtopic.title?.trim()
+                            ? `Condición para "${subtopic.title}"`
+                            : "Ingresa una condición o teorema..."
+                        }
+                        className="w-full px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                    </div>
                     <Button
                       onClick={() => openSubtopicDetail(subtopic.id)}
                       disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
@@ -2624,6 +2656,16 @@ export default function PropositionsApp() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
+          <div className="space-y-1 text-center md:text-left">
+            <h1 className="text-3xl font-bold text-balance">
+              {currentSubtopic.title?.trim()
+                ? currentSubtopic.title
+                : currentSubtopic.text.trim()
+                  ? currentSubtopic.text
+                  : "Subtema sin título"}
+            </h1>
+            <p className="text-sm text-muted-foreground">{currentTheme.name}</p>
+          </div>
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
               <p className="text-muted-foreground">
@@ -2819,6 +2861,18 @@ export default function PropositionsApp() {
       </div>
 
       <div className="max-w-4xl w-full space-y-8">
+        {currentSubtopic ? (
+          <div className="space-y-1 text-center md:text-left">
+            <h1 className="text-3xl font-bold text-balance">
+              {currentSubtopic.title?.trim()
+                ? currentSubtopic.title
+                : currentSubtopic.text.trim()
+                  ? currentSubtopic.text
+                  : "Subtema sin título"}
+            </h1>
+            <p className="text-sm text-muted-foreground">{currentTheme?.name}</p>
+          </div>
+        ) : null}
         <Card className="p-12 space-y-6">
           {isPracticeView && propositions.length > 0 && (
             <div className="flex items-center justify-center gap-4">

@@ -345,6 +345,7 @@ const PropositionRedirectPage = () => {
             eraId: match.era.id,
             themeId: match.theme.id,
             subtopicId: match.subtopic.id,
+            title: match.subtopic.title ?? match.subtopic.text,
           }),
         )
 
