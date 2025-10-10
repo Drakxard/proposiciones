@@ -2048,6 +2048,15 @@ export default function PropositionsApp() {
     }))
   }
 
+  const updateSubtopicTitle = (id: string, title: string) => {
+    if (!currentThemeId) return
+
+    updateSubtopicById(currentThemeId, id, (subtopic) => ({
+      ...subtopic,
+      title,
+    }))
+  }
+
   const updateSubtopicText = (id: string, text: string) => {
     if (!currentThemeId) return
 
@@ -2643,11 +2652,15 @@ export default function PropositionsApp() {
                     tabIndex={0}
                   >
                     <div className="flex-1 space-y-1">
-                      {subtopic.title ? (
-                        <p className="px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          {subtopic.title}
-                        </p>
-                      ) : null}
+                      <input
+                        type="text"
+                        value={subtopic.title ?? ""}
+                        onChange={(e) => updateSubtopicTitle(subtopic.id, e.target.value)}
+                        onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                        placeholder="Nombre del subtema (opcional)"
+                        className="w-full px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
+                        autoComplete="off"
+                      />
                       <input
                         type="text"
                         value={subtopic.text}
