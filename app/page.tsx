@@ -558,6 +558,25 @@ export default function PropositionsApp() {
   )
   const canGoToPrevious = findPreviousFilledIndex(currentIndex) !== -1
   const canGoToNext = findNextFilledIndex(currentIndex) !== -1
+  const filledPracticeIndices = useMemo(
+    () => propositionNavigationOrder.filter((index) => hasContentAtIndex(index)),
+    [hasContentAtIndex, propositionNavigationOrder],
+  )
+  const practiceNavigationLabel = useMemo(() => {
+    if (filledPracticeIndices.length > 0) {
+      const position = filledPracticeIndices.indexOf(currentIndex)
+      if (position !== -1) {
+        return `Proposición ${position + 1} de ${filledPracticeIndices.length}`
+      }
+    }
+
+    if (propositions.length === 0) {
+      return ""
+    }
+
+    const boundedIndex = Math.min(currentIndex + 1, propositions.length)
+    return `Proposición ${boundedIndex} de ${propositions.length}`
+  }, [currentIndex, filledPracticeIndices, propositions.length])
   const isNavigationLocked = isRecording || viewState === "countdown"
   const isVariantGenerationActive = generatingVariantId !== null
   const isGenerationBusy = generatingVariantId !== null || generatingPropositionId !== null
@@ -2960,7 +2979,7 @@ export default function PropositionsApp() {
                 {"<-"}
               </Button>
               <span className="text-sm font-medium text-muted-foreground">
-                Proposición {currentIndex + 1} de {propositions.length}
+                {practiceNavigationLabel || currentProposition?.label}
               </span>
               <Button
                 variant="outline"
