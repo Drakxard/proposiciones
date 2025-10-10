@@ -6,6 +6,13 @@ import type {
   StoredProposition,
 } from "@/lib/storage"
 
+const log = (...messages: unknown[]) => {
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console
+    console.log("[external-subtopics]", ...messages)
+  }
+}
+
 export const EXTERNAL_THEME_ID = "external-subtopics"
 export const EXTERNAL_THEME_NAME = "Subtemas compartidos"
 export const PENDING_SUBTOPIC_STORAGE_KEY = "propositions-app:pending-open-subtopic"
@@ -65,12 +72,12 @@ const cloneStoredSubtopic = (subtopic: StoredSubtopic): StoredSubtopic => ({
 
 const cloneStoredTheme = (theme: StoredTheme): StoredTheme => ({
   ...theme,
-  subtopics: theme.subtopics.map(cloneStoredSubtopic),
+  subtopics: (theme.subtopics ?? []).map(cloneStoredSubtopic),
 })
 
 const cloneStoredEra = (era: StoredEra): StoredEra => ({
   ...era,
-  themes: era.themes.map(cloneStoredTheme),
+  themes: (era.themes ?? []).map(cloneStoredTheme),
 })
 
 export const createDefaultAppState = (): StoredAppState => {
@@ -93,13 +100,22 @@ export const prepareStateForExternalSubtopic = (
   baseState: StoredAppState | null | undefined,
 ): StoredAppState => {
   if (!baseState) {
+    log("No stored app state found. Creating default state for external subtopic.")
     return createDefaultAppState()
   }
 
-  return {
+  const prepared = {
     currentEra: cloneStoredEra(baseState.currentEra),
-    eraHistory: baseState.eraHistory.map(cloneStoredEra),
+    eraHistory: (baseState.eraHistory ?? []).map(cloneStoredEra),
   }
+
+  log("Prepared stored app state for external subtopic", {
+    currentEraId: prepared.currentEra.id,
+    currentThemeCount: prepared.currentEra.themes.length,
+    historyCount: prepared.eraHistory.length,
+  })
+
+  return prepared
 }
 
 export const upsertExternalSubtopic = (
@@ -109,7 +125,7 @@ export const upsertExternalSubtopic = (
   const timestamp = Date.now()
   const { id, name } = payload
 
-  const currentThemes = state.currentEra.themes
+  const currentThemes = state.currentEra.themes ?? []
   let existingThemeIndex = currentThemes.findIndex((theme) => theme.id === EXTERNAL_THEME_ID)
 
   let updatedThemes: StoredTheme[]
@@ -155,7 +171,7 @@ export const upsertExternalSubtopic = (
     })
   }
 
-  return {
+  const nextState = {
     ...state,
     currentEra: {
       ...state.currentEra,
@@ -163,6 +179,16 @@ export const upsertExternalSubtopic = (
       themes: updatedThemes,
     },
   }
+
+  const externalTheme = nextState.currentEra.themes.find((theme) => theme.id === EXTERNAL_THEME_ID)
+  log("Upserted external subtopic", {
+    subtopicId: id,
+    themeCount: nextState.currentEra.themes.length,
+    hasExternalTheme: Boolean(externalTheme),
+    subtopicCount: externalTheme?.subtopics.length ?? 0,
+  })
+
+  return nextState
 }
 
 export const findSubtopicInAppState = (

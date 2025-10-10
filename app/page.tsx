@@ -298,10 +298,18 @@ export default function PropositionsApp() {
   }, [])
 
   const refreshAppStateForExternalNavigation = useCallback(async () => {
+    console.log("[v0] Refreshing app state for external navigation…")
     try {
       const storedState = await loadAppState()
       if (storedState) {
+        console.log("[v0] Loaded app state during external navigation refresh", {
+          currentEraId: storedState.currentEra?.id,
+          themeCount: storedState.currentEra?.themes?.length ?? 0,
+          historyCount: storedState.eraHistory?.length ?? 0,
+        })
         applyStoredAppState(storedState)
+      } else {
+        console.warn("[v0] No stored app state found while refreshing external navigation")
       }
     } catch (refreshError) {
       console.error("[v0] Error refreshing app state for external navigation:", refreshError)
@@ -598,8 +606,14 @@ export default function PropositionsApp() {
     const theme = themes.find((item) => item.id === themeId)
 
     if (!theme) {
-      console.warn("[v0] No se encontró el tema solicitado para la navegación externa:", themeId)
+      console.warn(
+        "[v0] No se encontró el tema solicitado para la navegación externa:",
+        themeId,
+        "Temas disponibles:",
+        themes.map((item) => item.id),
+      )
       if (requestRefresh()) {
+        console.log("[v0] Requested refresh after missing theme", themeId)
         return
       }
 

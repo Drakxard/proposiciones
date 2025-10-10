@@ -30,6 +30,7 @@ const CreateSubtopicPage = () => {
   }, [subtopicId])
 
   useEffect(() => {
+    console.log("[nuevaproposicion] Received payload", payload)
     const parsed = parseExternalSubtopicPayload(payload)
 
     if (!parsed) {
@@ -45,12 +46,37 @@ const CreateSubtopicPage = () => {
     let cancelled = false
 
     const persistSubtopic = async () => {
+      console.log("[nuevaproposicion] Starting persistence for subtopic", parsed)
       try {
         const stored = await loadAppState()
+        console.log(
+          "[nuevaproposicion] Loaded app state",
+          stored
+            ? {
+                currentEraId: stored.currentEra?.id,
+                themeCount: stored.currentEra?.themes?.length ?? 0,
+                historyCount: stored.eraHistory?.length ?? 0,
+              }
+            : { currentEraId: null, themeCount: 0, historyCount: 0 },
+        )
         const prepared = prepareStateForExternalSubtopic(stored)
+        console.log("[nuevaproposicion] Prepared app state", {
+          currentEraId: prepared.currentEra.id,
+          themeCount: prepared.currentEra.themes.length,
+          historyCount: prepared.eraHistory.length,
+        })
         const updated = upsertExternalSubtopic(prepared, parsed)
+        const externalTheme = updated.currentEra.themes.find(
+          (theme) => theme.id === "external-subtopics",
+        )
+        console.log("[nuevaproposicion] Updated app state before saving", {
+          themeCount: updated.currentEra.themes.length,
+          hasExternalTheme: Boolean(externalTheme),
+          externalSubtopicCount: externalTheme?.subtopics.length ?? 0,
+        })
 
         await saveAppState(updated)
+        console.log("[nuevaproposicion] Saved app state for subtopic", parsed.id)
 
         if (!cancelled) {
           setStatus("redirecting")
