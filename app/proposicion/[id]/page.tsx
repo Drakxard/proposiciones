@@ -38,18 +38,30 @@ const PropositionRedirectPage = () => {
 
     const redirectToSubtopic = async () => {
       try {
+        console.log("[proposicion] Looking for subtopic in stored state", decodedId)
         const storedState = await loadAppState()
         if (cancelled) {
           return
         }
 
+        console.log("[proposicion] Loaded stored state", {
+          hasStoredState: Boolean(storedState),
+          currentEraId: storedState?.currentEra?.id,
+          themeCount: storedState?.currentEra?.themes?.length,
+        })
         const match = findSubtopicInAppState(storedState, decodedId)
 
         if (!match) {
+          console.warn("[proposicion] Subtopic not found in stored state", decodedId)
           setStatus("not-found")
           return
         }
 
+        console.log("[proposicion] Found subtopic match", {
+          eraId: match.era.id,
+          themeId: match.theme.id,
+          subtopicId: match.subtopic.id,
+        })
         window.localStorage.setItem(
           PENDING_SUBTOPIC_STORAGE_KEY,
           JSON.stringify({
