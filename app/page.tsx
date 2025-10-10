@@ -1272,6 +1272,26 @@ export default function PropositionsApp() {
       console.log("[v0] Starting to load persisted data...")
 
       let storedState: StoredAppState | null = null
+      let fileSystemState: StoredAppState | null = null
+
+      let shouldPreferIndexedDb = false
+      if (typeof window !== "undefined") {
+        try {
+          shouldPreferIndexedDb = Boolean(
+            window.localStorage.getItem(PENDING_SUBTOPIC_STORAGE_KEY),
+          )
+          if (shouldPreferIndexedDb) {
+            console.log(
+              "[v0] Pending external navigation detected, preferring IndexedDB data",
+            )
+          }
+        } catch (error) {
+          console.warn(
+            "[v0] Could not inspect pending external navigation flag:",
+            error,
+          )
+        }
+      }
 
       if (isFileSystemSupported()) {
         const handle = await getSavedDirectoryHandle()
@@ -1279,13 +1299,19 @@ export default function PropositionsApp() {
           console.log("[v0] Found saved file system handle, loading from file system...")
           setFileSystemHandle(handle)
           setUseFileSystem(true)
-          const fileSystemState = await loadFromFileSystem(handle)
+          fileSystemState = await loadFromFileSystem(handle)
 
-          if (fileSystemState) {
+          if (fileSystemState && !shouldPreferIndexedDb) {
             applyStoredAppState(fileSystemState)
             setIsLoadingData(false)
             console.log("[v0] Successfully loaded from file system")
             return
+          }
+
+          if (fileSystemState && shouldPreferIndexedDb) {
+            console.log(
+              "[v0] Loaded state from file system but will prefer IndexedDB for freshness",
+            )
           }
         }
       }
@@ -1297,6 +1323,13 @@ export default function PropositionsApp() {
       if (storedState) {
         console.log("[v0] Loaded app state from IndexedDB")
         applyStoredAppState(storedState)
+        setIsLoadingData(false)
+        return
+      }
+
+      if (fileSystemState) {
+        console.log("[v0] Falling back to file system state after IndexedDB miss")
+        applyStoredAppState(fileSystemState)
         setIsLoadingData(false)
         return
       }
