@@ -73,6 +73,7 @@ const cloneStoredSubtopic = (
   return {
     ...subtopic,
     id: subtopicId,
+    title: subtopic.title,
     propositions: subtopic.propositions
       ? subtopic.propositions.map((proposition, propIndex) =>
           cloneStoredProposition(proposition, subtopicId, propIndex),
@@ -151,7 +152,7 @@ export const upsertExternalSubtopic = (
     const newTheme: StoredTheme = {
       id: EXTERNAL_THEME_ID,
       name: EXTERNAL_THEME_NAME,
-      subtopics: [{ id: payloadId, text: name, propositions: null }],
+      subtopics: [{ id: payloadId, text: name, title: name, propositions: null }],
     }
 
     updatedThemes = [...currentThemes, newTheme]
@@ -170,6 +171,7 @@ export const upsertExternalSubtopic = (
         return {
           ...subtopic,
           id: normalizedSubtopicId,
+          title: subtopic.title,
           propositions: subtopic.propositions
             ? subtopic.propositions.map((proposition, propIndex) => ({
                 ...proposition,
@@ -184,12 +186,13 @@ export const upsertExternalSubtopic = (
       )
 
       if (existingSubtopicIndex === -1) {
-        subtopics.push({ id: payloadId, text: name, propositions: null })
+        subtopics.push({ id: payloadId, text: name, title: name, propositions: null })
       } else {
         const existing = subtopics[existingSubtopicIndex]
         subtopics[existingSubtopicIndex] = {
           ...existing,
           text: name,
+          title: name,
           propositions: existing.propositions
             ? existing.propositions.map((proposition) => ({
                 ...proposition,
@@ -244,6 +247,7 @@ export const findSubtopicInAppState = (
             subtopic: {
               ...subtopic,
               id: subtopicId,
+              title: subtopic.title,
               propositions: subtopic.propositions
                 ? subtopic.propositions.map((proposition, propIndex) => ({
                     ...proposition,
@@ -260,6 +264,7 @@ export const findSubtopicInAppState = (
                   ? {
                       ...subtopic,
                       id: subtopicId,
+                      title: subtopic.title,
                       propositions: subtopic.propositions
                         ? subtopic.propositions.map((proposition, propIndex) => ({
                             ...proposition,
