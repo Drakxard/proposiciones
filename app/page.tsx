@@ -1548,6 +1548,7 @@ export default function PropositionsApp() {
               return {
                 id: subtopicId,
                 text: subtopic.text ?? "",
+                title: subtopic.title ?? undefined,
                 propositions: null,
               }
             }
@@ -1571,6 +1572,7 @@ export default function PropositionsApp() {
             return {
               id: subtopicId,
               text: subtopic.text ?? "",
+              title: subtopic.title ?? undefined,
               propositions: propositionsWithAudios,
             }
           }),
@@ -1598,6 +1600,7 @@ export default function PropositionsApp() {
                   return {
                     id: subtopicId,
                     text: subtopic.text ?? "",
+                    title: subtopic.title ?? undefined,
                     propositions: null,
                   }
                 }
@@ -1621,6 +1624,7 @@ export default function PropositionsApp() {
                 return {
                   id: subtopicId,
                   text: subtopic.text ?? "",
+                  title: subtopic.title ?? undefined,
                   propositions: propositionsWithAudios,
                 }
               }),
@@ -1741,6 +1745,7 @@ export default function PropositionsApp() {
                 return {
                   id: subtopicId,
                   text: subtopic?.text ?? "",
+                  title: subtopic?.title ?? undefined,
                   propositions,
                 }
               }),
@@ -1800,6 +1805,7 @@ export default function PropositionsApp() {
               return {
                 id: subtopicId,
                 text: subtopic.text ?? "",
+                title: subtopic.title ?? undefined,
                 propositions: null,
               }
             }
@@ -1833,6 +1839,7 @@ export default function PropositionsApp() {
             return {
               id: subtopicId,
               text: subtopic.text ?? "",
+              title: subtopic.title ?? undefined,
               propositions: propositionsWithAudios,
             }
           }),
@@ -1871,6 +1878,7 @@ export default function PropositionsApp() {
                 return {
                   id: subtopicId,
                   text: subtopic.text ?? "",
+                  title: subtopic.title ?? undefined,
                   propositions: null,
                 }
               }
@@ -1904,6 +1912,7 @@ export default function PropositionsApp() {
               return {
                 id: subtopicId,
                 text: subtopic.text ?? "",
+                title: subtopic.title ?? undefined,
                 propositions: propositionsWithAudios,
               }
             }),
@@ -1970,6 +1979,7 @@ export default function PropositionsApp() {
           subtopics: theme.subtopics.map((subtopic) => ({
             id: subtopic.id,
             text: subtopic.text,
+            title: subtopic.title ?? undefined,
             propositions: subtopic.propositions
               ? subtopic.propositions.map((prop) => ({
                   id: prop.id,
@@ -1998,6 +2008,7 @@ export default function PropositionsApp() {
           subtopics: theme.subtopics.map((subtopic) => ({
             id: subtopic.id,
             text: subtopic.text,
+            title: subtopic.title ?? undefined,
             propositions: subtopic.propositions
               ? subtopic.propositions.map((prop) => ({
                   id: prop.id,
