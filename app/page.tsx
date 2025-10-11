@@ -14,6 +14,9 @@ import {
   Loader2,
   RotateCcw,
   History,
+  Copy,
+  Check,
+  AlertCircle,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -45,6 +48,11 @@ import {
   writeBlobFile,
   readBlobFile,
 } from "@/lib/file-system"
+import {
+  buildSubtopicCopyText,
+  DEFAULT_SUBTOPIC_COPY_TEMPLATE,
+  getStoredSubtopicCopyTemplate,
+} from "@/lib/copy-template"
 
 type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
 
@@ -302,6 +310,11 @@ export default function PropositionsApp() {
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
   const [generatingVariantId, setGeneratingVariantId] = useState<string | null>(null)
+  const [subtopicCopyTemplate, setSubtopicCopyTemplate] = useState(
+    DEFAULT_SUBTOPIC_COPY_TEMPLATE,
+  )
+  const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle")
+  const copyStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 👇 de codex/modify-subtopic-display-behavior
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -331,6 +344,23 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+
+  useEffect(() => {
+    setSubtopicCopyTemplate(getStoredSubtopicCopyTemplate())
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (copyStatusTimeoutRef.current) {
+        clearTimeout(copyStatusTimeoutRef.current)
+        copyStatusTimeoutRef.current = null
+      }
+    }
+  }, [])
+
+  const handleCopyTemplateChange = useCallback((template: string) => {
+    setSubtopicCopyTemplate(template)
+  }, [])
 
   const applyStoredAppState = useCallback((state: StoredAppState) => {
     const normalizedCurrent = normalizeStoredEra(state.currentEra)
@@ -522,6 +552,13 @@ export default function PropositionsApp() {
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
   const propositions = currentSubtopic?.propositions || []
+  const getPropositionTextByType = useCallback(
+    (type: PropositionType): string => {
+      const match = propositions.find((prop) => prop.type === type)
+      return match?.text?.trim() ?? ""
+    },
+    [propositions],
+  )
   const propositionNavigationOrder = useMemo(
     () => buildPropositionNavigationOrder(propositions),
     [propositions],
@@ -828,6 +865,56 @@ export default function PropositionsApp() {
     }
   }
 
+  const handleCopySubtopicToClipboard = useCallback(async () => {
+    if (!currentSubtopic) {
+      return
+    }
+
+    if (copyStatusTimeoutRef.current) {
+      clearTimeout(copyStatusTimeoutRef.current)
+      copyStatusTimeoutRef.current = null
+    }
+
+    const template = subtopicCopyTemplate.trim().length
+      ? subtopicCopyTemplate
+      : DEFAULT_SUBTOPIC_COPY_TEMPLATE
+
+    const values = {
+      condicion: getPropositionTextByType("condicion") || currentSubtopic.text?.trim() || "",
+      reciproco: getPropositionTextByType("reciproco"),
+      inverso: getPropositionTextByType("inverso"),
+      contrareciproco: getPropositionTextByType("contrareciproco"),
+      subtema:
+        currentSubtopic.title?.trim() && currentSubtopic.title.trim().length > 0
+          ? currentSubtopic.title.trim()
+          : currentSubtopic.text?.trim() || "",
+      tema: currentTheme?.name ?? "",
+    }
+
+    const textToCopy = buildSubtopicCopyText(template, values)
+
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setCopyStatus("error")
+      copyStatusTimeoutRef.current = setTimeout(() => setCopyStatus("idle"), 2000)
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(textToCopy)
+      setCopyStatus("success")
+    } catch (error) {
+      console.error("[v0] Error copiando el subtema:", error)
+      setCopyStatus("error")
+    } finally {
+      copyStatusTimeoutRef.current = setTimeout(() => setCopyStatus("idle"), 2000)
+    }
+  }, [
+    currentSubtopic,
+    subtopicCopyTemplate,
+    getPropositionTextByType,
+    currentTheme?.name,
+  ])
+
   const handleImportModalOpenChange = (open: boolean) => {
     setShowImportModal(open)
     if (!open) {
@@ -934,7 +1021,11 @@ export default function PropositionsApp() {
 
   const sharedModals = (
     <>
-      <SettingsModal open={showSettingsModal} onOpenChange={setShowSettingsModal} />
+      <SettingsModal
+        open={showSettingsModal}
+        onOpenChange={setShowSettingsModal}
+        onCopyTemplateChange={handleCopyTemplateChange}
+      />
       <ErasModal
         open={showErasModal}
         onOpenChange={setShowErasModal}
@@ -2704,15 +2795,35 @@ export default function PropositionsApp() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
-          <div className="space-y-1 text-center md:text-left">
-            <h1 className="text-3xl font-bold text-balance">
-              {currentSubtopic.title?.trim()
-                ? currentSubtopic.title
-                : currentSubtopic.text.trim()
-                  ? currentSubtopic.text
-                  : "Subtema sin título"}
-            </h1>
-            <p className="text-sm text-muted-foreground">{currentTheme.name}</p>
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-1 text-center md:text-left md:flex-1">
+              <h1 className="text-3xl font-bold text-balance">
+                {currentSubtopic.title?.trim()
+                  ? currentSubtopic.title
+                  : currentSubtopic.text.trim()
+                    ? currentSubtopic.text
+                    : "Subtema sin título"}
+              </h1>
+              <p className="text-sm text-muted-foreground">{currentTheme.name}</p>
+            </div>
+            <div className="flex items-center justify-center md:justify-end">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleCopySubtopicToClipboard}
+                className="md:self-start"
+                title="Copiar resumen del subtema"
+              >
+                {copyStatus === "success" ? (
+                  <Check className="w-5 h-5" />
+                ) : copyStatus === "error" ? (
+                  <AlertCircle className="w-5 h-5" />
+                ) : (
+                  <Copy className="w-5 h-5" />
+                )}
+                <span className="sr-only">Copiar resumen del subtema</span>
+              </Button>
+            </div>
           </div>
           {propositions.length === 0 ? (
             <Card className="p-8 space-y-4 text-center">
