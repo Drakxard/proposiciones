@@ -1,10 +1,4 @@
-export const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
-
-export const GROQ_FALLBACK_MODELS = [
-  GROQ_DEFAULT_MODEL,
-  "qwen/qwen3-32b",
-  "meta-llama/llama-4-maverick-17b-128e-instruct",
-] as const
+export const GROQ_DEFAULT_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 
 export const GROQ_MODEL_STORAGE_KEY = "groq_model"
 export const GROQ_VARIANT_PROMPTS_STORAGE_KEY = "groq_variant_prompts"

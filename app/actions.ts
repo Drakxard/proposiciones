@@ -3,7 +3,6 @@
 import {
   GROQ_DEFAULT_MODEL,
   GROQ_DEFAULT_VARIANT_PROMPTS,
-  GROQ_FALLBACK_MODELS,
   GROQ_SYSTEM_PROMPT,
   GROQ_VARIANT_LABELS,
   type PropositionVariant,
@@ -254,10 +253,9 @@ export async function rewriteProposition(
 
 export async function getAvailableModels(): Promise<string[]> {
   const apiKey = process.env.GROQ_API_KEY_CUSTOM || process.env.GROQ_API_KEY
-  const fallbackModels = Array.from(new Set([...GROQ_FALLBACK_MODELS]))
 
   if (!apiKey) {
-    return fallbackModels
+    return [GROQ_DEFAULT_MODEL]
   }
 
   try {
@@ -271,7 +269,7 @@ export async function getAvailableModels(): Promise<string[]> {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       console.error("[v0] Groq API error (models):", errorData)
-      return fallbackModels
+      return [GROQ_DEFAULT_MODEL]
     }
 
     const payload = await response.json()
@@ -281,11 +279,15 @@ export async function getAvailableModels(): Promise<string[]> {
           .filter((id: string | null): id is string => Boolean(id))
       : []
 
-    const normalizedModels = Array.from(new Set([...GROQ_FALLBACK_MODELS, ...models]))
+    const uniqueModels = Array.from(new Set(models))
 
-    return normalizedModels
+    if (!uniqueModels.includes(GROQ_DEFAULT_MODEL)) {
+      uniqueModels.unshift(GROQ_DEFAULT_MODEL)
+    }
+
+    return uniqueModels
   } catch (error) {
     console.error("[v0] Error fetching Groq models:", error)
-    return fallbackModels
+    return [GROQ_DEFAULT_MODEL]
   }
 }
