@@ -1,8 +1,33 @@
-export const GROQ_DEFAULT_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+export const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 export const GROQ_MODEL_STORAGE_KEY = "groq_model"
 export const GROQ_VARIANT_PROMPTS_STORAGE_KEY = "groq_variant_prompts"
 export const GROQ_LEGACY_PROMPT_STORAGE_KEY = "groq_prompt"
+
+type ReasoningEffort = "low" | "medium" | "high" | "default"
+
+type GroqModelConfig = {
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+  maxCompletionTokens?: number
+  reasoningEffort?: ReasoningEffort
+}
+
+export const GROQ_MODEL_CONFIGS: Record<string, GroqModelConfig> = {
+  "openai/gpt-oss-120b": {
+    temperature: 1,
+    topP: 1,
+    maxCompletionTokens: 8192,
+    reasoningEffort: "medium",
+  },
+  "qwen/qwen3-32b": {
+    temperature: 0.6,
+    topP: 0.95,
+    maxCompletionTokens: 4096,
+    reasoningEffort: "default",
+  },
+}
 
 export const GROQ_SYSTEM_PROMPT = `Eres un asistente que genera proposiciones lógicas. Debes responder ÚNICAMENTE con un objeto JSON válido y sin texto adicional antes o después.
 

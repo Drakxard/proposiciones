@@ -3,6 +3,7 @@
 import {
   GROQ_DEFAULT_MODEL,
   GROQ_DEFAULT_VARIANT_PROMPTS,
+  GROQ_MODEL_CONFIGS,
   GROQ_SYSTEM_PROMPT,
   GROQ_VARIANT_LABELS,
   type PropositionVariant,
@@ -89,6 +90,60 @@ const extractGroqContent = (content: unknown): string | null => {
   return null
 }
 
+type CreateGroqRequestOptions = {
+  model?: string
+  messages: unknown[]
+  responseFormat?: Record<string, unknown>
+  defaultTemperature?: number
+  defaultTopP?: number
+  defaultMaxTokens?: number
+}
+
+const createGroqRequestPayload = ({
+  model,
+  messages,
+  responseFormat,
+  defaultTemperature,
+  defaultTopP,
+  defaultMaxTokens,
+}: CreateGroqRequestOptions) => {
+  const resolvedModel = model || GROQ_DEFAULT_MODEL
+  const config = GROQ_MODEL_CONFIGS[resolvedModel]
+
+  const payload: Record<string, unknown> = {
+    model: resolvedModel,
+    messages,
+  }
+
+  if (responseFormat) {
+    payload.response_format = responseFormat
+  }
+
+  const temperature = config?.temperature ?? defaultTemperature
+  if (typeof temperature === "number") {
+    payload.temperature = temperature
+  }
+
+  const topP = config?.topP ?? defaultTopP
+  if (typeof topP === "number") {
+    payload.top_p = topP
+  }
+
+  if (typeof config?.maxCompletionTokens === "number") {
+    payload.max_completion_tokens = config.maxCompletionTokens
+  } else if (typeof config?.maxTokens === "number") {
+    payload.max_tokens = config.maxTokens
+  } else if (typeof defaultMaxTokens === "number") {
+    payload.max_tokens = defaultMaxTokens
+  }
+
+  if (config?.reasoningEffort) {
+    payload.reasoning_effort = config.reasoningEffort
+  }
+
+  return payload
+}
+
 export async function generatePropositionVariant(
   condition: string,
   variant: PropositionVariant,
@@ -118,22 +173,24 @@ export async function generatePropositionVariant(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: model || GROQ_DEFAULT_MODEL,
-        messages: [
-          {
-            role: "system",
-            content: GROQ_SYSTEM_PROMPT,
-          },
-          {
-            role: "user",
-            content: formatVariantPrompt(condition, variant, promptOverride),
-          },
-        ],
-        temperature: 0.7,
-        max_tokens: 512,
-        response_format: { type: "json_object" },
-      }),
+      body: JSON.stringify(
+        createGroqRequestPayload({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: GROQ_SYSTEM_PROMPT,
+            },
+            {
+              role: "user",
+              content: formatVariantPrompt(condition, variant, promptOverride),
+            },
+          ],
+          responseFormat: { type: "json_object" },
+          defaultTemperature: 0.7,
+          defaultMaxTokens: 512,
+        }),
+      ),
     })
 
     if (!response.ok) {
@@ -197,22 +254,24 @@ export async function rewriteProposition(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: model || GROQ_DEFAULT_MODEL,
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt || DEFAULT_REWRITE_PROMPT,
-          },
-          {
-            role: "user",
-            content: instruction,
-          },
-        ],
-        temperature: 0.7,
-        max_tokens: 512,
-        response_format: { type: "json_object" },
-      }),
+      body: JSON.stringify(
+        createGroqRequestPayload({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt || DEFAULT_REWRITE_PROMPT,
+            },
+            {
+              role: "user",
+              content: instruction,
+            },
+          ],
+          responseFormat: { type: "json_object" },
+          defaultTemperature: 0.7,
+          defaultMaxTokens: 512,
+        }),
+      ),
     })
 
     if (!response.ok) {
