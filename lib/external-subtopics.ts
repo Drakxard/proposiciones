@@ -189,14 +189,17 @@ export const upsertExternalSubtopic = (
         subtopics.push({ id: payloadId, text: name, title: name, propositions: null })
       } else {
         const existing = subtopics[existingSubtopicIndex]
+        const preservedTitle = existing.title?.trim().length ? existing.title : name
+        const preservedText = existing.text.trim().length ? existing.text : preservedTitle
+
         subtopics[existingSubtopicIndex] = {
           ...existing,
-          text: name,
-          title: name,
+          text: preservedText,
+          title: preservedTitle,
           propositions: existing.propositions
-            ? existing.propositions.map((proposition) => ({
+            ? existing.propositions.map((proposition, propIndex) => ({
                 ...proposition,
-                text: proposition.type === "condicion" ? name : proposition.text,
+                id: ensureStringId(proposition.id, `${normalizedSubtopicId}-${propIndex}`),
                 audios: [...proposition.audios],
               }))
             : null,

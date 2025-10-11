@@ -34,7 +34,10 @@ import {
   type StoredAppState,
   type StoredEra,
 } from "@/lib/storage"
-import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
+import {
+  EXTERNAL_THEME_ID,
+  PENDING_SUBTOPIC_STORAGE_KEY,
+} from "@/lib/external-subtopics"
 import { ensureStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
@@ -2051,6 +2054,11 @@ export default function PropositionsApp() {
   const updateSubtopicTitle = (id: string, title: string) => {
     if (!currentThemeId) return
 
+    const parentTheme = themes.find((theme) => theme.id === currentThemeId)
+    if (parentTheme?.id === EXTERNAL_THEME_ID) {
+      return
+    }
+
     updateSubtopicById(currentThemeId, id, (subtopic) => ({
       ...subtopic,
       title,
@@ -2596,6 +2604,7 @@ export default function PropositionsApp() {
     if (!currentTheme) {
       return null
     }
+    const isExternalTheme = currentTheme.id === EXTERNAL_THEME_ID
     return (
       <div className="min-h-screen bg-background p-8">
         <div className="max-w-4xl mx-auto space-y-6">
@@ -2607,9 +2616,15 @@ export default function PropositionsApp() {
               <input
                 type="text"
                 value={currentTheme.name}
-                onChange={(e) => updateThemeName(currentTheme.id, e.target.value)}
+                onChange={
+                  isExternalTheme
+                    ? undefined
+                    : (e) => updateThemeName(currentTheme.id, e.target.value)
+                }
                 className="text-3xl font-bold bg-transparent focus:outline-none"
                 placeholder="Tema sin nombre"
+                readOnly={isExternalTheme}
+                aria-readonly={isExternalTheme}
               />
             </div>
             <div className="flex items-center gap-2">
@@ -2655,11 +2670,17 @@ export default function PropositionsApp() {
                       <input
                         type="text"
                         value={subtopic.title ?? ""}
-                        onChange={(e) => updateSubtopicTitle(subtopic.id, e.target.value)}
+                        onChange={
+                          isExternalTheme
+                            ? undefined
+                            : (e) => updateSubtopicTitle(subtopic.id, e.target.value)
+                        }
                         onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                         placeholder="Nombre del subtema (opcional)"
                         className="w-full px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
                         autoComplete="off"
+                        readOnly={isExternalTheme}
+                        aria-readonly={isExternalTheme}
                       />
                       <input
                         type="text"
