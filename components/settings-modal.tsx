@@ -8,6 +8,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getAvailableModels } from "@/app/actions"
 import {
+  DEFAULT_SUBTOPIC_COPY_TEMPLATE,
+  SUBTOPIC_COPY_TEMPLATE_STORAGE_KEY,
+} from "@/lib/copy-template"
+import {
   GROQ_DEFAULT_MODEL,
   GROQ_DEFAULT_VARIANT_PROMPTS,
   GROQ_LEGACY_PROMPT_STORAGE_KEY,
@@ -21,6 +25,7 @@ import {
 interface SettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCopyTemplateChange?: (template: string) => void
 }
 
 const createDefaultPrompts = (): Record<PropositionVariant, string> => ({
@@ -29,12 +34,13 @@ const createDefaultPrompts = (): Record<PropositionVariant, string> => ({
   contrareciproco: GROQ_DEFAULT_VARIANT_PROMPTS.contrareciproco,
 })
 
-export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
+export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: SettingsModalProps) {
   const [model, setModel] = useState(GROQ_DEFAULT_MODEL)
   const [variantPrompts, setVariantPrompts] = useState<Record<PropositionVariant, string>>(
     createDefaultPrompts,
   )
   const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [copyTemplate, setCopyTemplate] = useState(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
 
   useEffect(() => {
     if (!open) {
@@ -80,6 +86,18 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
     setVariantPrompts(prompts)
 
+    try {
+      const storedTemplate = localStorage.getItem(SUBTOPIC_COPY_TEMPLATE_STORAGE_KEY)
+      if (storedTemplate && typeof storedTemplate === "string") {
+        setCopyTemplate(storedTemplate)
+      } else {
+        setCopyTemplate(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
+      }
+    } catch (error) {
+      console.warn("[v0] No se pudo leer el formato de copiado del subtema:", error)
+      setCopyTemplate(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
+    }
+
     let isActive = true
 
     const loadModels = async () => {
@@ -112,6 +130,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     localStorage.setItem(GROQ_MODEL_STORAGE_KEY, model)
     localStorage.setItem(GROQ_VARIANT_PROMPTS_STORAGE_KEY, JSON.stringify(variantPrompts))
     localStorage.removeItem(GROQ_LEGACY_PROMPT_STORAGE_KEY)
+    localStorage.setItem(SUBTOPIC_COPY_TEMPLATE_STORAGE_KEY, copyTemplate)
+    onCopyTemplateChange?.(copyTemplate)
     onOpenChange(false)
   }
 
@@ -122,6 +142,9 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     localStorage.removeItem(GROQ_MODEL_STORAGE_KEY)
     localStorage.removeItem(GROQ_VARIANT_PROMPTS_STORAGE_KEY)
     localStorage.removeItem(GROQ_LEGACY_PROMPT_STORAGE_KEY)
+    localStorage.removeItem(SUBTOPIC_COPY_TEMPLATE_STORAGE_KEY)
+    setCopyTemplate(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
+    onCopyTemplateChange?.(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
   }
 
   const handlePromptChange = (variant: PropositionVariant, value: string) => {
@@ -129,6 +152,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       ...current,
       [variant]: value,
     }))
+  }
+
+  const handleCopyTemplateChange = (value: string) => {
+    setCopyTemplate(value)
   }
 
   return (
@@ -139,6 +166,26 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         </DialogHeader>
 
         <div className="space-y-6 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="copy-template">Formato para copiar el subtema</Label>
+            <Textarea
+              id="copy-template"
+              value={copyTemplate}
+              onChange={(event) => handleCopyTemplateChange(event.target.value)}
+              rows={4}
+              className="font-mono text-sm"
+            />
+            <p className="text-sm text-muted-foreground">
+              Puedes usar los marcadores <code className="font-mono text-xs">{"{condicion}"}</code>,
+              <code className="font-mono text-xs">{"{reciproco}"}</code>,
+              <code className="font-mono text-xs">{"{inverso}"}</code> y
+              <code className="font-mono text-xs">{"{contrareciproco}"}</code> para insertar las
+              proposiciones correspondientes. También están disponibles
+              <code className="font-mono text-xs">{"{subtema}"}</code> y
+              <code className="font-mono text-xs">{"{tema}"}</code>.
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="model">Modelo de Groq</Label>
             <Select value={model} onValueChange={setModel}>
