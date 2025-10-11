@@ -2037,8 +2037,15 @@ export default function PropositionsApp() {
       if (handle) {
         setFileSystemHandle(handle)
         setUseFileSystem(true)
-        // Save current data to file system
-        await saveToFileSystem(handle, buildStoredAppState())
+
+        const existingState = await loadFromFileSystem(handle)
+        if (existingState) {
+          applyStoredAppState(existingState)
+          setIsLoadingData(false)
+        } else {
+          // No previous data found, persist the current in-memory state
+          await saveToFileSystem(handle, buildStoredAppState())
+        }
       }
     } catch (error: any) {
       if (error?.message?.includes("Cross origin") || error?.message?.includes("cross-origin")) {
