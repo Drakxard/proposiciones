@@ -3167,7 +3167,19 @@ export default function PropositionsApp() {
 
           {isRecording && (
             <div className="space-y-6">
-              <div className="relative w-24 h-24 mx-auto">
+              <div
+                className="relative w-24 h-24 mx-auto cursor-pointer"
+                role="button"
+                aria-label="Detener grabación"
+                onClick={stopRecording}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault()
+                    stopRecording()
+                  }
+                }}
+              >
                 <div className="absolute inset-0 rounded-full bg-destructive/20 animate-ping"></div>
                 <div className="absolute inset-0 rounded-full bg-destructive/40 animate-pulse"></div>
                 <div className="absolute inset-0 flex items-center justify-center">
