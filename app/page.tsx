@@ -34,7 +34,10 @@ import {
   type StoredAppState,
   type StoredEra,
 } from "@/lib/storage"
-import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
+import {
+  EXTERNAL_THEME_ID,
+  PENDING_SUBTOPIC_STORAGE_KEY,
+} from "@/lib/external-subtopics"
 import { ensureStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
@@ -2596,6 +2599,9 @@ export default function PropositionsApp() {
     if (!currentTheme) {
       return null
     }
+
+    const isExternalTheme = currentTheme.id === EXTERNAL_THEME_ID
+
     return (
       <div className="min-h-screen bg-background p-8">
         <div className="max-w-4xl mx-auto space-y-6">
@@ -2640,7 +2646,39 @@ export default function PropositionsApp() {
           ) : (
             <Card className="p-6 space-y-4">
               {subtopics.map((subtopic) => {
-                const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
+                const isSelected =
+                  focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
+                const displayTitle = subtopic.title?.trim()
+                  ? subtopic.title
+                  : subtopic.text
+
+                if (isExternalTheme) {
+                  return (
+                    <div
+                      key={subtopic.id}
+                      className={`flex items-center gap-4 rounded-lg p-3 transition ${
+                        isSelected ? "bg-primary/10" : "hover:bg-muted/40"
+                      }`}
+                      onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                      onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                      tabIndex={0}
+                    >
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                          {displayTitle}
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => openSubtopicDetail(subtopic.id)}
+                        disabled={isLoadingData || isGenerationBusy}
+                        className="whitespace-nowrap"
+                      >
+                        Ver subtema
+                      </Button>
+                    </div>
+                  )
+                }
+
                 return (
                   <div
                     key={subtopic.id}
