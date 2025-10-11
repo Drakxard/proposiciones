@@ -2057,30 +2057,6 @@ export default function PropositionsApp() {
     }))
   }
 
-  const updateSubtopicText = (id: string, text: string) => {
-    if (!currentThemeId) return
-
-    updateSubtopicById(currentThemeId, id, (subtopic) => {
-      const updated: Subtopic = {
-        ...subtopic,
-        text,
-      }
-
-      if (subtopic.propositions) {
-        updated.propositions = subtopic.propositions.map((prop) =>
-          prop.type === "condicion"
-            ? {
-                ...prop,
-                text,
-              }
-            : prop,
-        )
-      }
-
-      return updated
-    })
-  }
-
   const openSubtopicDetail = (subtopicId: string) => {
     if (!currentThemeId) return
 
@@ -2651,27 +2627,15 @@ export default function PropositionsApp() {
                     onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                     tabIndex={0}
                   >
-                    <div className="flex-1 space-y-1">
+                    <div className="flex-1">
                       <input
                         type="text"
                         value={subtopic.title ?? ""}
                         onChange={(e) => updateSubtopicTitle(subtopic.id, e.target.value)}
                         onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
                         placeholder="Nombre del subtema (opcional)"
-                        className="w-full px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
+                        className="w-full px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
                         autoComplete="off"
-                      />
-                      <input
-                        type="text"
-                        value={subtopic.text}
-                        onChange={(e) => updateSubtopicText(subtopic.id, e.target.value)}
-                        onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                        placeholder={
-                          subtopic.title?.trim()
-                            ? `Condición para "${subtopic.title}"`
-                            : "Ingresa una condición o teorema..."
-                        }
-                        className="w-full px-4 py-3 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
                     <Button
