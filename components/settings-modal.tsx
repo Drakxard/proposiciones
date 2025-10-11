@@ -14,6 +14,7 @@ import {
 import {
   GROQ_DEFAULT_MODEL,
   GROQ_DEFAULT_VARIANT_PROMPTS,
+  GROQ_FALLBACK_MODELS,
   GROQ_LEGACY_PROMPT_STORAGE_KEY,
   GROQ_MODEL_STORAGE_KEY,
   GROQ_VARIANT_KEYS,
@@ -105,17 +106,24 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
         const models = await getAvailableModels()
         if (!isActive) return
 
-        const normalized = Array.from(new Set(models.length ? models : [GROQ_DEFAULT_MODEL]))
+        const normalized = Array.from(
+          new Set([
+            ...GROQ_FALLBACK_MODELS,
+            ...(models.length ? models : []),
+          ]),
+        )
 
-        if (!normalized.includes(savedModel)) {
-          normalized.unshift(savedModel)
-        }
+        const withSaved = savedModel
+          ? Array.from(new Set([savedModel, ...normalized]))
+          : normalized
 
-        setAvailableModels(normalized)
+        setAvailableModels(withSaved)
       } catch (error) {
         console.error("[v0] Error loading Groq models:", error)
         if (!isActive) return
-        setAvailableModels((prev) => (prev.length ? prev : [GROQ_DEFAULT_MODEL]))
+        setAvailableModels((prev) =>
+          prev.length ? prev : Array.from(new Set([...GROQ_FALLBACK_MODELS])),
+        )
       }
     }
 
@@ -198,9 +206,12 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
                     {modelOption}
                   </SelectItem>
                 ))}
-                {availableModels.length === 0 && (
-                  <SelectItem value={GROQ_DEFAULT_MODEL}>{GROQ_DEFAULT_MODEL}</SelectItem>
-                )}
+                {availableModels.length === 0 &&
+                  Array.from(new Set([...GROQ_FALLBACK_MODELS])).map((modelOption) => (
+                    <SelectItem key={modelOption} value={modelOption}>
+                      {modelOption}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
             <p className="text-sm text-muted-foreground">Selecciona el modelo de Groq a utilizar</p>
