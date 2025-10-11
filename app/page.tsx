@@ -3167,13 +3167,19 @@ export default function PropositionsApp() {
 
           {isRecording && (
             <div className="space-y-6">
-              <div className="relative w-24 h-24 mx-auto">
+              <button
+                type="button"
+                onClick={stopRecording}
+                className="relative w-24 h-24 mx-auto cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-destructive rounded-full"
+                aria-label="Detener grabación"
+              >
                 <div className="absolute inset-0 rounded-full bg-destructive/20 animate-ping"></div>
                 <div className="absolute inset-0 rounded-full bg-destructive/40 animate-pulse"></div>
                 <div className="absolute inset-0 flex items-center justify-center">
                   <Mic className="w-10 h-10 text-destructive" />
                 </div>
-              </div>
+                <span className="sr-only">Detener grabación</span>
+              </button>
               <p className="text-xl font-medium text-foreground">Grabando...</p>
               <p className="text-sm text-muted-foreground">Presiona espacio/enter para finalizar</p>
             </div>
