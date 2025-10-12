@@ -3,6 +3,7 @@ export const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 export const GROQ_MODEL_STORAGE_KEY = "groq_model"
 export const GROQ_VARIANT_PROMPTS_STORAGE_KEY = "groq_variant_prompts"
 export const GROQ_LEGACY_PROMPT_STORAGE_KEY = "groq_prompt"
+export const GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY = "groq_image_transcription_prompt"
 
 type ReasoningEffort = "low" | "medium" | "high" | "default"
 
@@ -58,3 +59,6 @@ export const GROQ_DEFAULT_VARIANT_PROMPTS: Record<PropositionVariant, string> = 
 export const GROQ_VARIANT_KEYS = Object.keys(
   GROQ_VARIANT_LABELS,
 ) as PropositionVariant[]
+
+export const GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT =
+  "Transcribe el texto presente en la imagen proporcionada. Devuelve solo el texto reconocido, respetando saltos de línea cuando sea necesario."

@@ -6,6 +6,7 @@ import {
   GROQ_MODEL_CONFIGS,
   GROQ_SYSTEM_PROMPT,
   GROQ_VARIANT_LABELS,
+  GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT,
   type PropositionVariant,
 } from "@/lib/groq"
 
@@ -307,6 +308,86 @@ export async function rewriteProposition(
   } catch (error) {
     console.error("[v0] Error rewriting proposition:", error)
     return { error: `Error al rehacer la proposición: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+export async function transcribeImageSelection(
+  imageDataUrl: string,
+  prompt?: string,
+  model?: string,
+): Promise<{ text: string } | { error: string }> {
+  try {
+    if (!imageDataUrl || typeof imageDataUrl !== "string") {
+      return { error: "Imagen inválida" }
+    }
+
+    const transcriptionPrompt = prompt?.trim().length
+      ? prompt.trim()
+      : GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT
+
+    const apiKey = process.env.GROQ_API_KEY_CUSTOM || process.env.GROQ_API_KEY
+    if (!apiKey) {
+      return {
+        error: "GROQ_API_KEY no está configurada. Por favor, agrega GROQ_API_KEY_CUSTOM en las variables de entorno.",
+      }
+    }
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(
+        createGroqRequestPayload({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: transcriptionPrompt,
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Imagen seleccionada para transcribir.",
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: imageDataUrl,
+                  },
+                },
+              ],
+            },
+          ],
+          defaultTemperature: 0,
+          defaultTopP: 1,
+          defaultMaxTokens: 1024,
+        }),
+      ),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error("[v0] Groq API error (image transcription):", errorData)
+      return { error: `Error de Groq API: ${response.status} ${response.statusText}` }
+    }
+
+    const data = await response.json()
+    const text = extractGroqContent(data.choices?.[0]?.message?.content)
+
+    if (!text) {
+      return { error: "Respuesta vacía de Groq" }
+    }
+
+    return { text: text.trim() }
+  } catch (error) {
+    console.error("[v0] Error transcribing image selection:", error)
+    return {
+      error: `Error al transcribir la imagen: ${error instanceof Error ? error.message : String(error)}`,
+    }
   }
 }
 

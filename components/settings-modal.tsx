@@ -19,6 +19,8 @@ import {
   GROQ_VARIANT_KEYS,
   GROQ_VARIANT_LABELS,
   GROQ_VARIANT_PROMPTS_STORAGE_KEY,
+  GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT,
+  GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY,
   type PropositionVariant,
 } from "@/lib/groq"
 
@@ -26,6 +28,7 @@ interface SettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCopyTemplateChange?: (template: string) => void
+  onImagePromptChange?: (prompt: string) => void
 }
 
 const createDefaultPrompts = (): Record<PropositionVariant, string> => ({
@@ -34,13 +37,19 @@ const createDefaultPrompts = (): Record<PropositionVariant, string> => ({
   contrareciproco: GROQ_DEFAULT_VARIANT_PROMPTS.contrareciproco,
 })
 
-export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: SettingsModalProps) {
+export function SettingsModal({
+  open,
+  onOpenChange,
+  onCopyTemplateChange,
+  onImagePromptChange,
+}: SettingsModalProps) {
   const [model, setModel] = useState(GROQ_DEFAULT_MODEL)
   const [variantPrompts, setVariantPrompts] = useState<Record<PropositionVariant, string>>(
     createDefaultPrompts,
   )
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [copyTemplate, setCopyTemplate] = useState(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
+  const [imagePrompt, setImagePrompt] = useState(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
 
   useEffect(() => {
     if (!open) {
@@ -98,6 +107,24 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
       setCopyTemplate(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
     }
 
+    try {
+      const storedImagePrompt = localStorage.getItem(
+        GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY,
+      )
+      if (storedImagePrompt && typeof storedImagePrompt === "string") {
+        setImagePrompt(
+          storedImagePrompt.trim().length > 0
+            ? storedImagePrompt
+            : GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT,
+        )
+      } else {
+        setImagePrompt(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
+      }
+    } catch (error) {
+      console.warn("[v0] No se pudo leer el prompt de transcripción de imágenes:", error)
+      setImagePrompt(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
+    }
+
     let isActive = true
 
     const loadModels = async () => {
@@ -132,6 +159,8 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
     localStorage.removeItem(GROQ_LEGACY_PROMPT_STORAGE_KEY)
     localStorage.setItem(SUBTOPIC_COPY_TEMPLATE_STORAGE_KEY, copyTemplate)
     onCopyTemplateChange?.(copyTemplate)
+    localStorage.setItem(GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY, imagePrompt)
+    onImagePromptChange?.(imagePrompt)
     onOpenChange(false)
   }
 
@@ -145,6 +174,9 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
     localStorage.removeItem(SUBTOPIC_COPY_TEMPLATE_STORAGE_KEY)
     setCopyTemplate(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
     onCopyTemplateChange?.(DEFAULT_SUBTOPIC_COPY_TEMPLATE)
+    setImagePrompt(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
+    localStorage.removeItem(GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY)
+    onImagePromptChange?.(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
   }
 
   const handlePromptChange = (variant: PropositionVariant, value: string) => {
@@ -156,6 +188,10 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
 
   const handleCopyTemplateChange = (value: string) => {
     setCopyTemplate(value)
+  }
+
+  const handleImagePromptInputChange = (value: string) => {
+    setImagePrompt(value)
   }
 
   return (
@@ -204,6 +240,21 @@ export function SettingsModal({ open, onOpenChange, onCopyTemplateChange }: Sett
               </SelectContent>
             </Select>
             <p className="text-sm text-muted-foreground">Selecciona el modelo de Groq a utilizar</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="image-transcription-prompt">Prompt para transcribir imágenes</Label>
+            <Textarea
+              id="image-transcription-prompt"
+              value={imagePrompt}
+              onChange={(event) => handleImagePromptInputChange(event.target.value)}
+              rows={4}
+              className="font-mono text-sm"
+            />
+            <p className="text-sm text-muted-foreground">
+              Se utilizará cuando se intente importar texto desde una selección que solo contenga una imagen, como un escaneo o
+              fotografía.
+            </p>
           </div>
 
           <div className="space-y-6">

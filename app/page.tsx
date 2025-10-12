@@ -21,12 +21,14 @@ import {
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
 import { SubtopicImportModal, type SubtopicImportPayload } from "@/components/subtopic-import-modal"
-import { generatePropositionVariant, rewriteProposition } from "./actions"
+import { generatePropositionVariant, rewriteProposition, transcribeImageSelection } from "./actions"
 import {
   GROQ_DEFAULT_VARIANT_PROMPTS,
   GROQ_LEGACY_PROMPT_STORAGE_KEY,
   GROQ_MODEL_STORAGE_KEY,
   GROQ_VARIANT_PROMPTS_STORAGE_KEY,
+  GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT,
+  GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY,
   type PropositionVariant,
 } from "@/lib/groq"
 import {
@@ -313,6 +315,9 @@ export default function PropositionsApp() {
   const [subtopicCopyTemplate, setSubtopicCopyTemplate] = useState(
     DEFAULT_SUBTOPIC_COPY_TEMPLATE,
   )
+  const [imageTranscriptionPrompt, setImageTranscriptionPrompt] = useState(
+    GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT,
+  )
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle")
   const copyStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -350,6 +355,26 @@ export default function PropositionsApp() {
   }, [])
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    try {
+      const storedPrompt = window.localStorage.getItem(
+        GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY,
+      )
+      if (storedPrompt && storedPrompt.trim().length > 0) {
+        setImageTranscriptionPrompt(storedPrompt)
+      } else {
+        setImageTranscriptionPrompt(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
+      }
+    } catch (error) {
+      console.warn("[v0] No se pudo leer el prompt de transcripción de imágenes:", error)
+      setImageTranscriptionPrompt(GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT)
+    }
+  }, [])
+
+  useEffect(() => {
     return () => {
       if (copyStatusTimeoutRef.current) {
         clearTimeout(copyStatusTimeoutRef.current)
@@ -360,6 +385,27 @@ export default function PropositionsApp() {
 
   const handleCopyTemplateChange = useCallback((template: string) => {
     setSubtopicCopyTemplate(template)
+  }, [])
+
+  const handleImagePromptChange = useCallback((prompt: string) => {
+    setImageTranscriptionPrompt(prompt)
+  }, [])
+
+  const readBlobAsDataUrl = useCallback((blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        if (typeof reader.result === "string") {
+          resolve(reader.result)
+        } else {
+          reject(new Error("No se pudo procesar la imagen seleccionada."))
+        }
+      }
+      reader.onerror = () => {
+        reject(reader.error ?? new Error("No se pudo procesar la imagen seleccionada."))
+      }
+      reader.readAsDataURL(blob)
+    })
   }, [])
 
   const applyStoredAppState = useCallback((state: StoredAppState) => {
@@ -763,11 +809,20 @@ export default function PropositionsApp() {
   const getGroqSettings = (): {
     model?: string
     variantPrompts: Record<PropositionVariant, string>
+    imageTranscriptionPrompt: string
   } => {
     const defaults = createVariantPromptDefaults()
+    let resolvedImagePrompt =
+      imageTranscriptionPrompt && imageTranscriptionPrompt.trim().length > 0
+        ? imageTranscriptionPrompt
+        : GROQ_DEFAULT_IMAGE_TRANSCRIPTION_PROMPT
 
     if (typeof window === "undefined") {
-      return { model: undefined, variantPrompts: defaults }
+      return {
+        model: undefined,
+        variantPrompts: defaults,
+        imageTranscriptionPrompt: resolvedImagePrompt,
+      }
     }
 
     try {
@@ -798,13 +853,25 @@ export default function PropositionsApp() {
         }
       }
 
+      const storedImagePrompt = window.localStorage.getItem(
+        GROQ_IMAGE_TRANSCRIPTION_PROMPT_STORAGE_KEY,
+      )
+      if (storedImagePrompt && storedImagePrompt.trim().length > 0) {
+        resolvedImagePrompt = storedImagePrompt
+      }
+
       return {
         model: storedModel ?? undefined,
         variantPrompts: prompts,
+        imageTranscriptionPrompt: resolvedImagePrompt,
       }
     } catch (error) {
       console.warn("[v0] No se pudieron leer los ajustes de Groq:", error)
-      return { model: undefined, variantPrompts: defaults }
+      return {
+        model: undefined,
+        variantPrompts: defaults,
+        imageTranscriptionPrompt: resolvedImagePrompt,
+      }
     }
   }
 
@@ -1025,6 +1092,7 @@ export default function PropositionsApp() {
         open={showSettingsModal}
         onOpenChange={setShowSettingsModal}
         onCopyTemplateChange={handleCopyTemplateChange}
+        onImagePromptChange={handleImagePromptChange}
       />
       <ErasModal
         open={showErasModal}
@@ -2102,6 +2170,7 @@ export default function PropositionsApp() {
 
     let clipboardText = ""
     let clipboardError: string | null = null
+    let transcriptionNotice: string | null = null
 
     if (navigator.clipboard?.readText) {
       try {
@@ -2114,6 +2183,41 @@ export default function PropositionsApp() {
     } else {
       clipboardError =
         "El navegador no permite leer el portapapeles automáticamente. Pega el contenido manualmente."
+    }
+
+    if (!clipboardText.trim() && navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read()
+        let imageBlob: Blob | null = null
+
+        for (const item of items) {
+          const imageType = item.types.find((type) => type.startsWith("image/"))
+          if (imageType) {
+            imageBlob = await item.getType(imageType)
+            break
+          }
+        }
+
+        if (imageBlob) {
+          const dataUrl = await readBlobAsDataUrl(imageBlob)
+          const { model, imageTranscriptionPrompt: prompt } = getGroqSettings()
+          const transcription = await transcribeImageSelection(dataUrl, prompt, model)
+
+          if ("error" in transcription) {
+            clipboardError = transcription.error
+          } else {
+            clipboardText = transcription.text.trim()
+            transcriptionNotice =
+              "El texto se transcribió automáticamente desde la imagen seleccionada. Revisa el resultado antes de importarlo."
+          }
+        }
+      } catch (error) {
+        console.error("[v0] Error reading clipboard image:", error)
+        if (!clipboardError) {
+          clipboardError =
+            "No se pudo leer la imagen del portapapeles para transcribirla automáticamente."
+        }
+      }
     }
 
     let initialText = clipboardText
@@ -2132,11 +2236,17 @@ export default function PropositionsApp() {
       }
     }
 
-    const combinedMessage = clipboardError
-      ? reuseMessage
-        ? `${clipboardError} ${reuseMessage}`
-        : clipboardError
-      : reuseMessage
+    const messageParts: string[] = []
+    if (clipboardError) {
+      messageParts.push(clipboardError)
+    }
+    if (transcriptionNotice) {
+      messageParts.push(transcriptionNotice)
+    }
+    if (reuseMessage) {
+      messageParts.push(reuseMessage)
+    }
+    const combinedMessage = messageParts.length ? messageParts.join(" ") : null
 
     setImportInitialText(initialText ?? "")
     setImportClipboardError(combinedMessage || null)
