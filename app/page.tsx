@@ -14,6 +14,7 @@ import {
   Loader2,
   RotateCcw,
   History,
+  Link2,
   Copy,
   Check,
   AlertCircle,
@@ -315,6 +316,10 @@ export default function PropositionsApp() {
   )
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle")
   const copyStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [subtopicLinkCopyStatus, setSubtopicLinkCopyStatus] = useState<
+    Record<string, "idle" | "success" | "error">
+  >({})
+  const subtopicLinkCopyTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   // 👇 de codex/modify-subtopic-display-behavior
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -355,6 +360,15 @@ export default function PropositionsApp() {
         clearTimeout(copyStatusTimeoutRef.current)
         copyStatusTimeoutRef.current = null
       }
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      Object.values(subtopicLinkCopyTimeoutsRef.current).forEach((timeoutId) => {
+        clearTimeout(timeoutId)
+      })
+      subtopicLinkCopyTimeoutsRef.current = {}
     }
   }, [])
 
@@ -864,6 +878,83 @@ export default function PropositionsApp() {
       setGeneratingVariantId(null)
     }
   }
+
+  const updateSubtopicLinkStatus = useCallback(
+    (subtopicId: string, status: "idle" | "success" | "error") => {
+      setSubtopicLinkCopyStatus((previous) => {
+        const currentStatus = previous[subtopicId] ?? "idle"
+        if (currentStatus === status) {
+          return previous
+        }
+
+        if (status === "idle") {
+          if (!(subtopicId in previous)) {
+            return previous
+          }
+
+          const { [subtopicId]: _removed, ...rest } = previous
+          return rest
+        }
+
+        return { ...previous, [subtopicId]: status }
+      })
+    },
+    [setSubtopicLinkCopyStatus],
+  )
+
+  const scheduleSubtopicLinkStatusReset = useCallback(
+    (subtopicId: string) => {
+      const existing = subtopicLinkCopyTimeoutsRef.current[subtopicId]
+      if (existing) {
+        clearTimeout(existing)
+      }
+
+      subtopicLinkCopyTimeoutsRef.current[subtopicId] = setTimeout(() => {
+        updateSubtopicLinkStatus(subtopicId, "idle")
+        delete subtopicLinkCopyTimeoutsRef.current[subtopicId]
+      }, 2000)
+    },
+    [updateSubtopicLinkStatus],
+  )
+
+  const handleCopySubtopicLink = useCallback(
+    async (subtopicId: string) => {
+      if (!subtopicId) {
+        return
+      }
+
+      const existing = subtopicLinkCopyTimeoutsRef.current[subtopicId]
+      if (existing) {
+        clearTimeout(existing)
+        delete subtopicLinkCopyTimeoutsRef.current[subtopicId]
+      }
+
+      if (
+        typeof window === "undefined" ||
+        typeof navigator === "undefined" ||
+        !navigator.clipboard?.writeText
+      ) {
+        updateSubtopicLinkStatus(subtopicId, "error")
+        scheduleSubtopicLinkStatusReset(subtopicId)
+        return
+      }
+
+      try {
+        const shareUrl = new URL(
+          `/proposicion/${encodeURIComponent(subtopicId)}`,
+          window.location.origin,
+        ).toString()
+        await navigator.clipboard.writeText(shareUrl)
+        updateSubtopicLinkStatus(subtopicId, "success")
+      } catch (error) {
+        console.error(`[v0] Error copiando el enlace del subtema ${subtopicId}:`, error)
+        updateSubtopicLinkStatus(subtopicId, "error")
+      } finally {
+        scheduleSubtopicLinkStatusReset(subtopicId)
+      }
+    },
+    [scheduleSubtopicLinkStatusReset, updateSubtopicLinkStatus],
+  )
 
   const handleCopySubtopicToClipboard = useCallback(async () => {
     if (!currentSubtopic) {
@@ -2728,6 +2819,7 @@ export default function PropositionsApp() {
             <Card className="p-6 space-y-4">
               {subtopics.map((subtopic) => {
                 const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
+                const linkCopyStatus = subtopicLinkCopyStatus[subtopic.id] ?? "idle"
                 return (
                   <div
                     key={subtopic.id}
@@ -2749,6 +2841,21 @@ export default function PropositionsApp() {
                         autoComplete="off"
                       />
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleCopySubtopicLink(subtopic.id)}
+                      title="Copiar enlace del subtema"
+                    >
+                      {linkCopyStatus === "success" ? (
+                        <Check className="w-5 h-5" />
+                      ) : linkCopyStatus === "error" ? (
+                        <AlertCircle className="w-5 h-5" />
+                      ) : (
+                        <Link2 className="w-5 h-5" />
+                      )}
+                      <span className="sr-only">Copiar enlace del subtema</span>
+                    </Button>
                     <Button
                       onClick={() => openSubtopicDetail(subtopic.id)}
                       disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
