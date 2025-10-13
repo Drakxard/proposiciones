@@ -96,6 +96,21 @@ export async function getSavedDirectoryHandle(): Promise<FileSystemDirectoryHand
 }
 
 /**
+ * Check if a file exists without creating it
+ */
+export async function fileExists(
+  dirHandle: FileSystemDirectoryHandle,
+  filename: string,
+): Promise<boolean> {
+  try {
+    await dirHandle.getFileHandle(filename)
+    return true
+  } catch (error) {
+    return false
+  }
+}
+
+/**
  * Write JSON data to a file
  */
 export async function writeJSONFile(

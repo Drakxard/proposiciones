@@ -48,6 +48,7 @@ import {
   readJSONFile,
   writeBlobFile,
   readBlobFile,
+  fileExists,
 } from "@/lib/file-system"
 import {
   buildSubtopicCopyText,
@@ -351,10 +352,19 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+  const [fileSystemNotice, setFileSystemNotice] = useState<string | null>(null)
+  const hasWarnedExistingAppState = useRef(false)
 
   useEffect(() => {
     setSubtopicCopyTemplate(getStoredSubtopicCopyTemplate())
   }, [])
+
+  useEffect(() => {
+    if (!useFileSystem) {
+      setFileSystemNotice(null)
+      hasWarnedExistingAppState.current = false
+    }
+  }, [useFileSystem])
 
   useEffect(() => {
     return () => {
@@ -2070,7 +2080,23 @@ export default function PropositionsApp() {
         eraHistory: appState.eraHistory.map(prepareEraForJson),
       }
 
-      await writeJSONFile(handle, "app-state.json", jsonPayload)
+      const appStateAlreadyExists = await fileExists(handle, "app-state.json")
+
+      if (appStateAlreadyExists) {
+        console.warn("[v0] app-state.json already exists. Skipping overwrite to avoid conflicts.")
+        if (!hasWarnedExistingAppState.current) {
+          setFileSystemNotice(
+            "Se detectó un archivo app-state.json existente en la carpeta conectada. Para evitar conflictos, la aplicación no lo sobrescribe automáticamente.",
+          )
+          hasWarnedExistingAppState.current = true
+        }
+      } else {
+        const wroteAppState = await writeJSONFile(handle, "app-state.json", jsonPayload)
+        if (wroteAppState) {
+          hasWarnedExistingAppState.current = false
+          setFileSystemNotice(null)
+        }
+      }
       await writeJSONFile(
         handle,
         "themes.json",
@@ -2697,6 +2723,19 @@ export default function PropositionsApp() {
               </Button>
             </div>
           </div>
+
+          {fileSystemNotice && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+              <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+              <div className="space-y-2 text-sm">
+                <p>{fileSystemNotice}</p>
+                <p className="text-xs text-amber-800">
+                  Si necesitas reemplazarlo, renombra o elimina el archivo manualmente antes de volver a guardar desde la
+                  aplicación.
+                </p>
+              </div>
+            </div>
+          )}
 
           {isLoadingData ? (
             <Card className="p-12 text-center">
