@@ -17,6 +17,7 @@ import {
   Copy,
   Check,
   AlertCircle,
+  Share2,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -38,7 +39,7 @@ import {
   type StoredEra,
 } from "@/lib/storage"
 import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
-import { ensureStringId } from "@/lib/utils"
+import { ensureStringId, normalizeStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -315,6 +316,12 @@ export default function PropositionsApp() {
   )
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle")
   const copyStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [subtopicLinkStatus, setSubtopicLinkStatus] = useState<
+    Record<string, "idle" | "success" | "error">
+  >({})
+  const subtopicLinkStatusTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  )
 
   // 👇 de codex/modify-subtopic-display-behavior
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -355,12 +362,76 @@ export default function PropositionsApp() {
         clearTimeout(copyStatusTimeoutRef.current)
         copyStatusTimeoutRef.current = null
       }
+      subtopicLinkStatusTimeoutRef.current.forEach((timeoutId) => {
+        clearTimeout(timeoutId)
+      })
+      subtopicLinkStatusTimeoutRef.current.clear()
     }
   }, [])
 
   const handleCopyTemplateChange = useCallback((template: string) => {
     setSubtopicCopyTemplate(template)
   }, [])
+
+  const scheduleSubtopicLinkStatusReset = useCallback((key: string) => {
+    if (!key) {
+      return
+    }
+
+    const timeouts = subtopicLinkStatusTimeoutRef.current
+    const existing = timeouts.get(key)
+
+    if (existing) {
+      clearTimeout(existing)
+    }
+
+    const timeoutId = setTimeout(() => {
+      setSubtopicLinkStatus((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+      subtopicLinkStatusTimeoutRef.current.delete(key)
+    }, 2000)
+
+    timeouts.set(key, timeoutId)
+  }, [])
+
+  const handleCopySubtopicLink = useCallback(
+    async (subtopic: Subtopic) => {
+      const normalizedId = normalizeStringId(subtopic.id)
+      const linkKey = normalizedId ?? subtopic.id
+
+      if (!linkKey) {
+        console.error("[v0] Subtema sin identificador válido para compartir", subtopic)
+        return
+      }
+
+      if (
+        typeof window === "undefined" ||
+        typeof navigator === "undefined" ||
+        !navigator.clipboard?.writeText ||
+        !window.location?.origin
+      ) {
+        setSubtopicLinkStatus((prev) => ({ ...prev, [linkKey]: "error" }))
+        scheduleSubtopicLinkStatusReset(linkKey)
+        return
+      }
+
+      const shareUrl = `${window.location.origin}/proposicion/${encodeURIComponent(linkKey)}`
+
+      try {
+        await navigator.clipboard.writeText(shareUrl)
+        setSubtopicLinkStatus((prev) => ({ ...prev, [linkKey]: "success" }))
+      } catch (error) {
+        console.error("[v0] Error copiando enlace del subtema:", error)
+        setSubtopicLinkStatus((prev) => ({ ...prev, [linkKey]: "error" }))
+      } finally {
+        scheduleSubtopicLinkStatusReset(linkKey)
+      }
+    },
+    [scheduleSubtopicLinkStatusReset],
+  )
 
   const applyStoredAppState = useCallback((state: StoredAppState) => {
     const normalizedCurrent = normalizeStoredEra(state.currentEra)
@@ -2728,6 +2799,9 @@ export default function PropositionsApp() {
             <Card className="p-6 space-y-4">
               {subtopics.map((subtopic) => {
                 const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
+                const normalizedSubtopicId = normalizeStringId(subtopic.id)
+                const linkStatus =
+                  subtopicLinkStatus[normalizedSubtopicId ?? subtopic.id] ?? "idle"
                 return (
                   <div
                     key={subtopic.id}
@@ -2749,13 +2823,30 @@ export default function PropositionsApp() {
                         autoComplete="off"
                       />
                     </div>
-                    <Button
-                      onClick={() => openSubtopicDetail(subtopic.id)}
-                      disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
-                      className="whitespace-nowrap"
-                    >
-                      Ver subtema
-                    </Button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button
+                        onClick={() => openSubtopicDetail(subtopic.id)}
+                        disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
+                        className="whitespace-nowrap"
+                      >
+                        Ver subtema
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleCopySubtopicLink(subtopic)}
+                        title="Copiar enlace para compartir"
+                      >
+                        {linkStatus === "success" ? (
+                          <Check className="w-5 h-5" />
+                        ) : linkStatus === "error" ? (
+                          <AlertCircle className="w-5 h-5" />
+                        ) : (
+                          <Share2 className="w-5 h-5" />
+                        )}
+                        <span className="sr-only">Copiar enlace para compartir</span>
+                      </Button>
+                    </div>
                   </div>
                 )
               })}
