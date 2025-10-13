@@ -195,6 +195,11 @@ const createVariantPromptDefaults = (): Record<PropositionVariant, string> => ({
   contrareciproco: GROQ_DEFAULT_VARIANT_PROMPTS.contrareciproco,
 })
 
+const APP_STATE_PRIMARY_FILENAME = "app-state.json"
+const APP_STATE_LOCAL_FILENAME = "app-state.local.json"
+const EXISTING_APP_STATE_NOTICE =
+  "Se detectó un archivo app-state.json existente en la carpeta conectada. Para evitar conflictos, los cambios se guardan en app-state.local.json y puedes revisar manualmente cuándo reemplazar el original."
+
 const mapIndexToType = (index: number): PropositionKind => {
   switch (index) {
     case 0:
@@ -1748,8 +1753,22 @@ export default function PropositionsApp() {
     handle: FileSystemDirectoryHandle,
   ): Promise<StoredAppState | null> => {
     try {
-      console.log("[v0] Reading app-state.json from file system...")
-      const stateData = await readJSONFile(handle, "app-state.json")
+      const hasLocalAppState = await fileExists(handle, APP_STATE_LOCAL_FILENAME)
+      const hasPrimaryAppState = await fileExists(handle, APP_STATE_PRIMARY_FILENAME)
+
+      let stateData: any | null = null
+
+      if (hasLocalAppState) {
+        console.log(`[v0] Reading ${APP_STATE_LOCAL_FILENAME} from file system...`)
+        stateData = await readJSONFile(handle, APP_STATE_LOCAL_FILENAME)
+        setFileSystemNotice(EXISTING_APP_STATE_NOTICE)
+        hasWarnedExistingAppState.current = true
+      } else if (hasPrimaryAppState) {
+        console.log(`[v0] Reading ${APP_STATE_PRIMARY_FILENAME} from file system...`)
+        stateData = await readJSONFile(handle, APP_STATE_PRIMARY_FILENAME)
+        hasWarnedExistingAppState.current = false
+        setFileSystemNotice(null)
+      }
 
       const readAudioBlob = async (
         eraId: string,
@@ -1862,7 +1881,9 @@ export default function PropositionsApp() {
         }
       }
 
-      console.log("[v0] app-state.json not found, falling back to themes.json")
+      console.log(
+        `[v0] ${APP_STATE_PRIMARY_FILENAME} no se encontró. Buscando datos en themes.json como alternativa...`,
+      )
 
       let legacyData = await readJSONFile(handle, "themes.json")
       if (!legacyData) {
@@ -2080,19 +2101,20 @@ export default function PropositionsApp() {
         eraHistory: appState.eraHistory.map(prepareEraForJson),
       }
 
-      const appStateAlreadyExists = await fileExists(handle, "app-state.json")
+      const appStateAlreadyExists = await fileExists(handle, APP_STATE_PRIMARY_FILENAME)
+      const targetFilename = appStateAlreadyExists
+        ? APP_STATE_LOCAL_FILENAME
+        : APP_STATE_PRIMARY_FILENAME
 
-      if (appStateAlreadyExists) {
-        console.warn("[v0] app-state.json already exists. Skipping overwrite to avoid conflicts.")
-        if (!hasWarnedExistingAppState.current) {
-          setFileSystemNotice(
-            "Se detectó un archivo app-state.json existente en la carpeta conectada. Para evitar conflictos, la aplicación no lo sobrescribe automáticamente.",
-          )
-          hasWarnedExistingAppState.current = true
-        }
-      } else {
-        const wroteAppState = await writeJSONFile(handle, "app-state.json", jsonPayload)
-        if (wroteAppState) {
+      const wroteAppState = await writeJSONFile(handle, targetFilename, jsonPayload)
+
+      if (wroteAppState) {
+        if (appStateAlreadyExists) {
+          if (!hasWarnedExistingAppState.current) {
+            setFileSystemNotice(EXISTING_APP_STATE_NOTICE)
+            hasWarnedExistingAppState.current = true
+          }
+        } else {
           hasWarnedExistingAppState.current = false
           setFileSystemNotice(null)
         }
