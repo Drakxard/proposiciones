@@ -1476,7 +1476,7 @@ export default function PropositionsApp() {
         }
       }
 
-      if (e.key.toLowerCase() === "q" || e.key.toLowerCase() === "x") {
+      if (e.key.toLowerCase() === "x") {
         if (
           viewState === "themes" ||
           viewState === "subtopics" ||
@@ -2741,7 +2741,7 @@ export default function PropositionsApp() {
             </Card>
           )}
           <p className="text-xs text-muted-foreground text-center">
-            Selecciona una fila y presiona Q o X para eliminarla.
+            Selecciona una fila y presiona X para eliminarla.
           </p>
         </div>
 
@@ -2853,7 +2853,7 @@ export default function PropositionsApp() {
             </Card>
           )}
           <p className="text-xs text-muted-foreground text-center">
-            Selecciona una fila y presiona Q o X para eliminarla.
+            Selecciona una fila y presiona X para eliminarla.
           </p>
         </div>
 
@@ -3091,7 +3091,7 @@ export default function PropositionsApp() {
                 Presiona la barra espaciadora para iniciar la práctica.
               </p>
               <p className="text-center text-xs text-muted-foreground">
-                Selecciona una proposición y presiona Q o X para eliminarla.
+                Selecciona una proposición y presiona X para eliminarla.
               </p>
             </>
           )}
