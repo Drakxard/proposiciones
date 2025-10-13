@@ -351,6 +351,23 @@ export default function PropositionsApp() {
 
   const [fileSystemHandle, setFileSystemHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [useFileSystem, setUseFileSystem] = useState(false)
+  type AppStateFileSource = "unknown" | "canonical" | "external-readonly" | "local"
+  const [appStateFileSource, setAppStateFileSource] = useState<AppStateFileSource>("unknown")
+  const [appStateWarning, setAppStateWarning] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (appStateFileSource === "external-readonly") {
+      setAppStateWarning(
+        "Se detectó un app-state.json administrado por Presidencia. Para evitar conflictos se usará en modo solo lectura y los cambios se guardarán en app-state.local.json.",
+      )
+    } else if (appStateFileSource === "local") {
+      setAppStateWarning(
+        "Tus datos se están leyendo desde app-state.local.json para no modificar el archivo oficial app-state.json.",
+      )
+    } else {
+      setAppStateWarning(null)
+    }
+  }, [appStateFileSource])
 
   useEffect(() => {
     setSubtopicCopyTemplate(getStoredSubtopicCopyTemplate())
@@ -1738,9 +1755,6 @@ export default function PropositionsApp() {
     handle: FileSystemDirectoryHandle,
   ): Promise<StoredAppState | null> => {
     try {
-      console.log("[v0] Reading app-state.json from file system...")
-      const stateData = await readJSONFile(handle, "app-state.json")
-
       const readAudioBlob = async (
         eraId: string,
         subtopicId: string,
@@ -1841,9 +1855,9 @@ export default function PropositionsApp() {
         }
       }
 
-      if (stateData && typeof stateData === "object") {
-        const currentEra = await hydrateEra(stateData.currentEra, "Ciclo", 0)
-        const historyRaw: any[] = Array.isArray(stateData.eraHistory) ? stateData.eraHistory : []
+      const hydrateStoredAppState = async (rawState: any): Promise<StoredAppState> => {
+        const currentEra = await hydrateEra(rawState.currentEra, "Ciclo", 0)
+        const historyRaw: any[] = Array.isArray(rawState.eraHistory) ? rawState.eraHistory : []
         const history = await Promise.all(historyRaw.map((era, index) => hydrateEra(era, "Ciclo", index + 1)))
 
         return {
@@ -1852,6 +1866,22 @@ export default function PropositionsApp() {
         }
       }
 
+      console.log("[v0] Reading app-state.local.json from file system...")
+      const localStateData = await readJSONFile(handle, "app-state.local.json")
+      if (localStateData && typeof localStateData === "object") {
+        setAppStateFileSource("local")
+        return hydrateStoredAppState(localStateData)
+      }
+
+      console.log("[v0] Reading app-state.json from file system...")
+      const stateData = await readJSONFile(handle, "app-state.json")
+
+      if (stateData && typeof stateData === "object") {
+        setAppStateFileSource("external-readonly")
+        return hydrateStoredAppState(stateData)
+      }
+
+      setAppStateFileSource("unknown")
       console.log("[v0] app-state.json not found, falling back to themes.json")
 
       let legacyData = await readJSONFile(handle, "themes.json")
@@ -2019,7 +2049,7 @@ export default function PropositionsApp() {
     if (!isLoadingData) {
       saveData()
     }
-  }, [themes, eraHistory, currentEra, useFileSystem, fileSystemHandle, isLoadingData])
+  }, [themes, eraHistory, currentEra, useFileSystem, fileSystemHandle, isLoadingData, appStateFileSource])
 
   const saveData = async () => {
     try {
@@ -2070,7 +2100,25 @@ export default function PropositionsApp() {
         eraHistory: appState.eraHistory.map(prepareEraForJson),
       }
 
-      await writeJSONFile(handle, "app-state.json", jsonPayload)
+      let targetAppStateFilename = "app-state.json"
+      if (appStateFileSource === "external-readonly" || appStateFileSource === "local") {
+        targetAppStateFilename = "app-state.local.json"
+        if (appStateFileSource === "external-readonly") {
+          console.warn(
+            "[v0] app-state.json is managed externally. Writing updates to app-state.local.json to avoid conflicts.",
+          )
+        }
+      }
+
+      const wroteAppState = await writeJSONFile(handle, targetAppStateFilename, jsonPayload)
+
+      if (wroteAppState) {
+        if (appStateFileSource === "unknown") {
+          setAppStateFileSource("canonical")
+        } else if (appStateFileSource === "external-readonly") {
+          setAppStateFileSource("local")
+        }
+      }
       await writeJSONFile(
         handle,
         "themes.json",
@@ -2697,6 +2745,16 @@ export default function PropositionsApp() {
               </Button>
             </div>
           </div>
+
+          {appStateWarning && (
+            <div className="p-4 rounded-md border border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Archivo protegido</p>
+                <p className="text-sm leading-relaxed">{appStateWarning}</p>
+              </div>
+            </div>
+          )}
 
           {isLoadingData ? (
             <Card className="p-12 text-center">
