@@ -1477,11 +1477,7 @@ export default function PropositionsApp() {
       }
 
       if (e.key.toLowerCase() === "q" || e.key.toLowerCase() === "x") {
-        if (
-          viewState === "themes" ||
-          viewState === "subtopics" ||
-          viewState === "overview"
-        ) {
+        if (viewState === "themes" || viewState === "overview") {
           e.preventDefault()
           deleteFocusedItem()
         }
@@ -2805,7 +2801,7 @@ export default function PropositionsApp() {
                 return (
                   <div
                     key={subtopic.id}
-                    className={`flex items-center gap-4 rounded-lg p-2 transition ${
+                    className={`relative flex items-center gap-4 rounded-lg p-2 pr-12 transition ${
                       isSelected ? "bg-primary/10" : "hover:bg-muted/40"
                     }`}
                     onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
@@ -2847,13 +2843,23 @@ export default function PropositionsApp() {
                         <span className="sr-only">Copiar enlace para compartir</span>
                       </Button>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => deleteSubtopic(subtopic.id)}
+                      className="absolute top-2 right-2 h-7 px-2"
+                      title="Eliminar subtema"
+                    >
+                      X
+                      <span className="sr-only">Eliminar subtema</span>
+                    </Button>
                   </div>
                 )
               })}
             </Card>
           )}
           <p className="text-xs text-muted-foreground text-center">
-            Selecciona una fila y presiona Q o X para eliminarla.
+            Usa el botón "X" en la fila del subtema para eliminarlo.
           </p>
         </div>
 
