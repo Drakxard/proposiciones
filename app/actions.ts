@@ -144,6 +144,33 @@ const createGroqRequestPayload = ({
   return payload
 }
 
+const API_USAGE_LIMIT = 100
+
+type ApiUsageState = {
+  dateKey: string
+  count: number
+}
+
+let apiUsageState: ApiUsageState = {
+  dateKey: new Date().toISOString().slice(0, 10),
+  count: 0,
+}
+
+const canUseApi = () => {
+  const todayKey = new Date().toISOString().slice(0, 10)
+
+  if (apiUsageState.dateKey !== todayKey) {
+    apiUsageState = { dateKey: todayKey, count: 0 }
+  }
+
+  if (apiUsageState.count >= API_USAGE_LIMIT) {
+    return false
+  }
+
+  apiUsageState.count += 1
+  return true
+}
+
 export async function generatePropositionVariant(
   condition: string,
   variant: PropositionVariant,
@@ -153,6 +180,10 @@ export async function generatePropositionVariant(
   try {
     if (!condition || typeof condition !== "string") {
       return { error: "Condición inválida" }
+    }
+
+    if (!canUseApi()) {
+      return { error: "Se alcanzó el límite diario de uso de la API" }
     }
 
     const variantLabel = GROQ_VARIANT_LABELS[variant]
@@ -239,6 +270,10 @@ export async function rewriteProposition(
   try {
     if (!instruction || typeof instruction !== "string") {
       return { error: "Instrucción inválida" }
+    }
+
+    if (!canUseApi()) {
+      return { error: "Se alcanzó el límite diario de uso de la API" }
     }
 
     const apiKey = process.env.GROQ_API_KEY_CUSTOM || process.env.GROQ_API_KEY
