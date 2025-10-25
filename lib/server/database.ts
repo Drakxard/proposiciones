@@ -43,13 +43,29 @@ const extractRows = (payload: any): any[] => {
   return []
 }
 
-const buildSqlEndpoint = (databaseUrl: URL) => {
-  if (databaseUrl.protocol === "https:" || databaseUrl.protocol === "http:") {
-    const origin = `${databaseUrl.protocol}//${databaseUrl.host}`
-    return `${origin}/sql`
+const normalizeHostname = (hostname: string) => {
+  if (!hostname.endsWith(".neon.tech")) {
+    return hostname
   }
 
-  return `https://${databaseUrl.host}/sql`
+  const awsSuffixMatch = hostname.match(/^(?<prefix>.+?)\.[^.]+\.aws\.neon\.tech$/)
+
+  if (awsSuffixMatch?.groups?.prefix) {
+    hostname = `${awsSuffixMatch.groups.prefix}.neon.tech`
+  }
+
+  return hostname.replace(/-pooler(?=\.neon\.tech$)/, "")
+}
+
+const buildSqlEndpoint = (databaseUrl: URL) => {
+  const hostname = normalizeHostname(databaseUrl.hostname)
+
+  if (databaseUrl.protocol === "https:" || databaseUrl.protocol === "http:") {
+    const portSegment = databaseUrl.port ? `:${databaseUrl.port}` : ""
+    return `${databaseUrl.protocol}//${hostname}${portSegment}/sql`
+  }
+
+  return `https://${hostname}/sql`
 }
 
 const buildAuthorizationHeader = (databaseUrl: URL) => {
@@ -82,22 +98,30 @@ const executeSql = async (query: string) => {
   const endpoint = buildSqlEndpoint(url)
   const authorization = buildAuthorizationHeader(url)
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: authorization,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      sql: query,
-      params: [],
-      parameters: [],
-      database: databaseName,
-      format: "json",
-    }),
-    cache: "no-store",
-  })
+  let response: Response
+
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        sql: query,
+        params: [],
+        parameters: [],
+        database: databaseName,
+        format: "json",
+      }),
+      cache: "no-store",
+    })
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : typeof error === "string" ? error : "Error desconocido"
+    throw new Error(`No se pudo conectar al servicio SQL: ${message}`)
+  }
 
   if (!response.ok) {
     const errorBody = await response.text()
