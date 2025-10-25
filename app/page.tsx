@@ -1257,7 +1257,7 @@ export default function PropositionsApp() {
       return tokens
     }, [text])
 
-    const segmentRefs = useRef<(HTMLSpanElement | null)[]>([])
+    const [renderedSegments, setRenderedSegments] = useState<(string | null)[]>([])
 
     useEffect(() => {
       if (typeof window === "undefined") return
@@ -1295,40 +1295,62 @@ export default function PropositionsApp() {
     }, [])
 
     useEffect(() => {
-      if (!isKatexReady) return
-      const katex = (window as any).katex
-      if (!katex) return
+      if (!isKatexReady) {
+        setRenderedSegments([])
+        return
+      }
 
-      segments.forEach((segment, index) => {
-        if (segment.type === "math") {
-          const element = segmentRefs.current[index]
-          if (element) {
-            try {
-              katex.render(segment.content, element, {
-                throwOnError: false,
-                displayMode: segment.display,
-              })
-            } catch (error) {
-              console.error("[v0] Error rendering KaTeX:", error)
-              element.textContent = segment.content
-            }
-          }
+      const katex = (window as any).katex
+      if (!katex) {
+        return
+      }
+
+      let cancelled = false
+
+      const nextRendered = segments.map((segment) => {
+        if (segment.type !== "math") {
+          return null
+        }
+
+        try {
+          return katex.renderToString(segment.content, {
+            throwOnError: false,
+            displayMode: segment.display,
+          })
+        } catch (error) {
+          console.error("[v0] Error rendering KaTeX:", error)
+          return null
         }
       })
+
+      if (!cancelled) {
+        setRenderedSegments(nextRendered)
+      }
+
+      return () => {
+        cancelled = true
+      }
     }, [isKatexReady, segments])
 
     return (
       <span className="math-text whitespace-pre-wrap break-words">
         {segments.map((segment, index) => {
           if (segment.type === "math") {
+            const rendered = renderedSegments[index]
+            if (rendered) {
+              return (
+                <span
+                  key={index}
+                  className={segment.display ? "block my-2" : "inline"}
+                  dangerouslySetInnerHTML={{ __html: rendered }}
+                />
+              )
+            }
+
             return (
-              <span
-                key={index}
-                ref={(el) => {
-                  segmentRefs.current[index] = el
-                }}
-                className={segment.display ? "block my-2" : "inline"}
-              />
+              <span key={index} className={segment.display ? "block my-2" : "inline"}>
+                {segment.content}
+              </span>
             )
           }
 
