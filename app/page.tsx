@@ -19,6 +19,7 @@ import {
   AlertCircle,
   Share2,
   Pencil,
+  Search,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -310,6 +311,7 @@ export default function PropositionsApp() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [importInitialText, setImportInitialText] = useState("")
   const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
+  const [subtopicSearch, setSubtopicSearch] = useState("")
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
   const [generatingVariantId, setGeneratingVariantId] = useState<string | null>(null)
@@ -357,6 +359,10 @@ export default function PropositionsApp() {
   useEffect(() => {
     setSubtopicCopyTemplate(getStoredSubtopicCopyTemplate())
   }, [])
+
+  useEffect(() => {
+    setSubtopicSearch("")
+  }, [currentThemeId])
 
   useEffect(() => {
     return () => {
@@ -620,6 +626,21 @@ export default function PropositionsApp() {
 
   const currentTheme = currentThemeId ? themes.find((t) => t.id === currentThemeId) ?? null : null
   const subtopics = currentTheme?.subtopics ?? []
+  const orderedSubtopics = useMemo(() => {
+    return [...subtopics].reverse()
+  }, [subtopics])
+  const filteredSubtopics = useMemo(() => {
+    const query = subtopicSearch.trim().toLowerCase()
+    if (!query) {
+      return orderedSubtopics
+    }
+
+    return orderedSubtopics.filter((subtopic) => {
+      const title = subtopic.title?.toLowerCase() ?? ""
+      const text = subtopic.text.toLowerCase()
+      return title.includes(query) || text.includes(query)
+    })
+  }, [orderedSubtopics, subtopicSearch])
   const currentSubtopic =
     currentSubtopicId && currentTheme
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
@@ -2687,7 +2708,18 @@ export default function PropositionsApp() {
                 placeholder="Tema sin nombre"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 items-stretch sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                <input
+                  type="search"
+                  value={subtopicSearch}
+                  onChange={(event) => setSubtopicSearch(event.target.value)}
+                  placeholder="Buscar subtema"
+                  aria-label="Buscar subtema"
+                  className="w-full rounded-md border border-input bg-background py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
               <Button
                 variant="ghost"
                 size="icon"
@@ -2712,9 +2744,13 @@ export default function PropositionsApp() {
                 Este tema aún no tiene subtemas. Usa el botón [+] para importar desde el portapapeles.
               </p>
             </Card>
+          ) : filteredSubtopics.length === 0 ? (
+            <Card className="p-12 text-center space-y-4">
+              <p className="text-muted-foreground">No se encontraron subtemas que coincidan con la búsqueda.</p>
+            </Card>
           ) : (
             <Card className="p-6 space-y-4">
-              {subtopics.map((subtopic) => {
+              {filteredSubtopics.map((subtopic) => {
                 const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
                 const normalizedSubtopicId = normalizeStringId(subtopic.id)
                 const linkStatus =
