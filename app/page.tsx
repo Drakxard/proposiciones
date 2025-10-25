@@ -18,7 +18,16 @@ import {
   Check,
   AlertCircle,
   Share2,
+  Info,
 } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
 import { SubtopicImportModal, type SubtopicImportPayload } from "@/components/subtopic-import-modal"
@@ -288,6 +297,8 @@ const PRACTICE_VIEW_STATES: ViewState[] = [
   "listening",
   "countdown",
 ]
+
+const KATEX_VERSION = "0.16.9"
 export default function PropositionsApp() {
   const initialTimestamp = useMemo(() => Date.now(), [])
   const [themes, setThemes] = useState<Theme[]>(() => cloneThemes(DEFAULT_INITIAL_THEMES))
@@ -309,6 +320,7 @@ export default function PropositionsApp() {
   const [importInitialText, setImportInitialText] = useState("")
   const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
   const [isLoadingData, setIsLoadingData] = useState(true)
+  const [isLatexInfoOpen, setIsLatexInfoOpen] = useState(false)
   const [generatingPropositionId, setGeneratingPropositionId] = useState<string | null>(null)
   const [generatingVariantId, setGeneratingVariantId] = useState<string | null>(null)
   const [subtopicCopyTemplate, setSubtopicCopyTemplate] = useState(
@@ -1269,7 +1281,7 @@ export default function PropositionsApp() {
         const link = document.createElement("link")
         link.id = "katex-styles"
         link.rel = "stylesheet"
-        link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"
+        link.href = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/katex.min.css`
         document.head.appendChild(link)
       }
 
@@ -1286,7 +1298,7 @@ export default function PropositionsApp() {
 
       const script = document.createElement("script")
       script.id = "katex-script"
-      script.src = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"
+      script.src = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/katex.min.js`
       script.async = true
       script.onload = () => setIsKatexReady(true)
       script.onerror = () => console.error("No se pudo cargar KaTeX")
@@ -3182,9 +3194,52 @@ export default function PropositionsApp() {
           )}
           <div className="flex items-start justify-between gap-8">
             <div className="flex-1 space-y-3">
-              <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                {currentProposition?.label}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                  {currentProposition?.label}
+                </p>
+                <Dialog open={isLatexInfoOpen} onOpenChange={setIsLatexInfoOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      title="Ver guía de fórmulas"
+                    >
+                      <Info className="h-4 w-4" />
+                      <span className="sr-only">Ver guía de fórmulas</span>
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="space-y-4">
+                    <DialogHeader>
+                      <DialogTitle>Fórmulas en LaTeX</DialogTitle>
+                      <DialogDescription>
+                        Esta aplicación utiliza KaTeX v{KATEX_VERSION} para renderizar las expresiones.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm text-muted-foreground">
+                      <p>
+                        Escribe expresiones en línea con{" "}
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-xs">$...$</code>
+                        y fórmulas en bloque con{" "}
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-xs">$$...$$</code>.
+                      </p>
+                      <p>
+                        Consulta la{" "}
+                        <a
+                          href="https://katex.org/docs/supported.html"
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="ml-1 font-medium text-primary underline underline-offset-4"
+                        >
+                          documentación de KaTeX
+                        </a>
+                        para ver ejemplos de símbolos disponibles.
+                      </p>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
               <div className="text-2xl leading-relaxed text-foreground break-words">
                 {currentPropositionHasContent ? (
                   <MathText text={currentProposition?.text ?? ""} />
