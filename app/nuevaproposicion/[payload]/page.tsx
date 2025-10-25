@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { Loader2, XCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,37 @@ const CreateSubtopicPage = () => {
   const params = useParams<{ payload: string }>()
   const payload = params?.payload ?? ""
   const router = useRouter()
+  const searchParams = useSearchParams()
+
+  const queryTags = useMemo(() => {
+    const params = searchParams
+
+    if (!params) {
+      return []
+    }
+
+    const seen = new Set<string>()
+    const tags: string[] = []
+
+    for (const rawTag of params.getAll("tag")) {
+      const trimmed = rawTag.trim()
+
+      if (!trimmed) {
+        continue
+      }
+
+      const normalized = trimmed.toLowerCase()
+
+      if (seen.has(normalized)) {
+        continue
+      }
+
+      seen.add(normalized)
+      tags.push(trimmed)
+    }
+
+    return tags
+  }, [searchParams])
 
   const propositionUrl = useMemo(() => {
     if (!subtopicId) return "#"
@@ -42,8 +73,12 @@ const CreateSubtopicPage = () => {
       setStatus("error")
       return
     }
+    const payloadWithTags = {
+      ...parsed,
+      tags: queryTags,
+    }
 
-    console.log("[nuevaproposicion] Parsed payload", parsed)
+    console.log("[nuevaproposicion] Parsed payload", payloadWithTags)
     setSubtopicId(parsed.id)
 
     let cancelled = false
@@ -61,11 +96,12 @@ const CreateSubtopicPage = () => {
           currentEraId: prepared.currentEra.id,
           themeCount: prepared.currentEra.themes.length,
         })
-        const updated = upsertExternalSubtopic(prepared, parsed)
+        const updated = upsertExternalSubtopic(prepared, payloadWithTags)
         console.log("[nuevaproposicion] Upserted external subtopic", {
           themeCount: updated.currentEra.themes.length,
           subtopicId: parsed.id,
           themeIds: updated.currentEra.themes.map((theme) => theme.id),
+          tags: payloadWithTags.tags,
         })
 
         await saveAppState(updated)
@@ -89,7 +125,7 @@ const CreateSubtopicPage = () => {
     return () => {
       cancelled = true
     }
-  }, [payload, router])
+  }, [payload, queryTags, router])
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-10 text-center">
