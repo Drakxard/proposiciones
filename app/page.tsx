@@ -18,6 +18,7 @@ import {
   Check,
   AlertCircle,
   Share2,
+  Pencil,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -2506,7 +2507,7 @@ export default function PropositionsApp() {
   }
 
   const handleRewriteProposition = async (target: Proposition) => {
-    if (!currentSubtopic) {
+    if (!currentSubtopic || !currentThemeId || !currentSubtopicId) {
       return
     }
 
@@ -2516,7 +2517,54 @@ export default function PropositionsApp() {
       ""
 
     if (target.type === "condicion") {
-      alert("Edita la condición directamente en el campo principal.")
+      if (typeof window === "undefined") {
+        return
+      }
+
+      const existingText = conditionText.trim()
+      const userText = window.prompt(
+        "Edita la condición:",
+        existingText.length > 0 ? existingText : target.text,
+      )
+
+      if (userText === null) {
+        return
+      }
+
+      const trimmed = userText.trim()
+
+      if (!trimmed) {
+        alert("La condición no puede quedar vacía.")
+        return
+      }
+
+      updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+        const nextPropositions = subtopic.propositions
+          ? subtopic.propositions.map((prop) =>
+              prop.type === "condicion"
+                ? {
+                    ...prop,
+                    text: trimmed,
+                  }
+                : prop,
+            )
+          : [
+              {
+                id: `${subtopic.id}-condicion`,
+                type: "condicion",
+                label: propositionTypeLabels.condicion,
+                text: trimmed,
+                audios: [],
+              },
+            ]
+
+        return {
+          ...subtopic,
+          text: trimmed,
+          propositions: nextPropositions,
+        }
+      })
+
       return
     }
 
@@ -2959,6 +3007,7 @@ export default function PropositionsApp() {
                   const hasContent = prop.text.trim().length > 0
                   const isStandardVariant =
                     prop.type !== "custom" && prop.type !== "condicion"
+                  const canRewrite = prop.type === "condicion" ? true : hasContent
 
                   return (
                     <div
@@ -3047,11 +3096,17 @@ export default function PropositionsApp() {
                           size="icon"
                           onClick={() => handleRewriteProposition(prop)}
                           className="hover:bg-primary/10"
-                          title="Rehacer esta proposición"
-                          disabled={rewritingPropositionId === prop.id || !hasContent}
+                          title={
+                            prop.type === "condicion"
+                              ? "Editar esta condición"
+                              : "Rehacer esta proposición"
+                          }
+                          disabled={rewritingPropositionId === prop.id || !canRewrite}
                         >
                           {rewritingPropositionId === prop.id ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : prop.type === "condicion" ? (
+                            <Pencil className="w-5 h-5" />
                           ) : (
                             <RotateCcw className="w-5 h-5" />
                           )}
@@ -3110,6 +3165,10 @@ export default function PropositionsApp() {
   const currentPropositionHasContent = Boolean(
     currentProposition?.text && currentProposition.text.trim().length > 0,
   )
+  const currentPropositionIsCondition = currentProposition?.type === "condicion"
+  const currentPropositionCanRewrite = currentPropositionIsCondition
+    ? true
+    : currentPropositionHasContent
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-8">
@@ -3204,14 +3263,18 @@ export default function PropositionsApp() {
                     size="sm"
                     onClick={() => handleRewriteProposition(currentProposition)}
                     disabled={
-                      rewritingPropositionId === currentProposition.id || !currentPropositionHasContent
+                      rewritingPropositionId === currentProposition.id ||
+                      !currentPropositionCanRewrite
                     }
                     className="whitespace-nowrap"
                   >
                     {rewritingPropositionId === currentProposition.id ? (
                       <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Rehaciendo...
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        {currentPropositionIsCondition ? "Guardando..." : "Rehaciendo..."}
                       </>
+                    ) : currentPropositionIsCondition ? (
+                      "Editar condición"
                     ) : (
                       "Rehacer proposición"
                     )}
