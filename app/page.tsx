@@ -19,7 +19,6 @@ import {
   AlertCircle,
   Share2,
   Pencil,
-  Search,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -42,7 +41,7 @@ import {
   type StoredEra,
 } from "@/lib/storage"
 import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
-import { ensureStringId, normalizeStringId, normalizeTags } from "@/lib/utils"
+import { ensureStringId, normalizeStringId } from "@/lib/utils"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -75,9 +74,6 @@ interface Subtopic {
   text: string
   propositions: Proposition[] | null
   title?: string
-  createdAt: number
-  updatedAt: number
-  tags: string[]
 }
 
 interface Theme {
@@ -110,7 +106,6 @@ const cloneThemes = (themes: Theme[]): Theme[] =>
     ...theme,
     subtopics: theme.subtopics.map((subtopic) => ({
       ...subtopic,
-      tags: [...subtopic.tags],
       propositions: subtopic.propositions
         ? subtopic.propositions.map((prop) => ({
             ...prop,
@@ -154,8 +149,6 @@ const summarizeEra = (era: Era): EraSummary => {
   }
 }
 
-const defaultSubtopicTimestamp = Date.now()
-
 const DEFAULT_INITIAL_THEMES: Theme[] = [
   {
     id: "theme-1",
@@ -166,9 +159,6 @@ const DEFAULT_INITIAL_THEMES: Theme[] = [
         text: "Si es Derivable entonces es Continuo",
         title: "Si es Derivable entonces es Continuo",
         propositions: null,
-        createdAt: defaultSubtopicTimestamp,
-        updatedAt: defaultSubtopicTimestamp,
-        tags: [],
       },
     ],
   },
@@ -273,24 +263,16 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
             subtopic.id,
             `${themeId}-subtopic-${subIndex}`,
           )
-          const fallbackTimestamp = Date.now()
-          const createdAt =
-            typeof subtopic.createdAt === "number" ? subtopic.createdAt : fallbackTimestamp
-          const updatedAt =
-            typeof subtopic.updatedAt === "number" ? subtopic.updatedAt : createdAt
 
-          return {
-            id: subtopicId,
-            text: subtopic.text ?? "",
-            title: subtopic.title ?? undefined,
-            createdAt,
-            updatedAt,
-            tags: normalizeTags(subtopic.tags),
-            propositions: subtopic.propositions
-              ? subtopic.propositions.map((prop, propIndex) => ({
-                  id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
-                  type: (prop.type ?? "custom") as PropositionKind,
-                  label: prop.label ?? `Proposición ${propIndex + 1}`,
+        return {
+          id: subtopicId,
+          text: subtopic.text ?? "",
+          title: subtopic.title ?? undefined,
+          propositions: subtopic.propositions
+            ? subtopic.propositions.map((prop, propIndex) => ({
+                id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
+                type: (prop.type ?? "custom") as PropositionKind,
+                label: prop.label ?? `Proposición ${propIndex + 1}`,
                   text: prop.text ?? "",
                   audios: prop.audios ? [...prop.audios] : [],
                 }))
@@ -342,7 +324,6 @@ export default function PropositionsApp() {
   const subtopicLinkStatusTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   )
-  const [subtopicSearchTerm, setSubtopicSearchTerm] = useState("")
 
   // 👇 de codex/modify-subtopic-display-behavior
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -639,34 +620,11 @@ export default function PropositionsApp() {
 
   const currentTheme = currentThemeId ? themes.find((t) => t.id === currentThemeId) ?? null : null
   const subtopics = currentTheme?.subtopics ?? []
-  const sortedSubtopics = useMemo(
-    () => [...subtopics].sort((a, b) => b.updatedAt - a.updatedAt),
-    [subtopics],
-  )
-  const filteredSubtopics = useMemo(() => {
-    const term = subtopicSearchTerm.trim().toLowerCase()
-
-    if (!term) {
-      return sortedSubtopics
-    }
-
-    return sortedSubtopics.filter((subtopic) => {
-      const title = subtopic.title?.toLowerCase() ?? ""
-      const text = subtopic.text?.toLowerCase() ?? ""
-      const tagMatches = subtopic.tags.some((tag) => tag.toLowerCase().includes(term))
-
-      return title.includes(term) || text.includes(term) || tagMatches
-    })
-  }, [sortedSubtopics, subtopicSearchTerm])
   const currentSubtopic =
     currentSubtopicId && currentTheme
       ? currentTheme.subtopics.find((s) => s.id === currentSubtopicId) ?? null
       : null
   const propositions = currentSubtopic?.propositions || []
-
-  useEffect(() => {
-    setSubtopicSearchTerm("")
-  }, [currentThemeId])
   const getPropositionTextByType = useCallback(
     (type: PropositionType): string => {
       const match = propositions.find((prop) => prop.type === type)
@@ -723,49 +681,12 @@ export default function PropositionsApp() {
     subtopicId: string,
     updater: (subtopic: Subtopic) => Subtopic,
   ) => {
-    const timestamp = Date.now()
-
-    updateThemeById(themeId, (theme) => {
-      let didUpdate = false
-
-      const nextSubtopics = theme.subtopics.map((subtopic) => {
-        if (subtopic.id !== subtopicId) {
-          return subtopic
-        }
-
-        const updated = updater(subtopic)
-
-        if (updated === subtopic) {
-          return subtopic
-        }
-
-        didUpdate = true
-
-        const createdAt =
-          typeof updated.createdAt === "number"
-            ? updated.createdAt
-            : typeof subtopic.createdAt === "number"
-              ? subtopic.createdAt
-              : timestamp
-        const normalizedUpdatedAt =
-          typeof updated.updatedAt === "number" ? updated.updatedAt : timestamp
-
-        return {
-          ...updated,
-          createdAt,
-          updatedAt: normalizedUpdatedAt,
-        }
-      })
-
-      if (!didUpdate) {
-        return theme
-      }
-
-      return {
-        ...theme,
-        subtopics: nextSubtopics,
-      }
-    })
+    updateThemeById(themeId, (theme) => ({
+      ...theme,
+      subtopics: theme.subtopics.map((subtopic) =>
+        subtopic.id === subtopicId ? updater(subtopic) : subtopic,
+      ),
+    }))
   }
 
   const ensureStandardPropositions = (themeId: string, subtopicId: string) => {
@@ -800,32 +721,9 @@ export default function PropositionsApp() {
         .filter((prop) => !STANDARD_PROPOSITION_TYPES.includes(prop.type as PropositionType))
         .map((prop) => ({ ...prop, audios: [...prop.audios] }))
 
-      const combinedEntries = [...standardEntries, ...additionalEntries]
-      const hasDifference =
-        combinedEntries.length !== existing.length ||
-        combinedEntries.some((entry, index) => {
-          const previous = existing[index]
-
-          if (!previous) {
-            return true
-          }
-
-          return (
-            entry.id !== previous.id ||
-            entry.type !== previous.type ||
-            entry.label !== previous.label ||
-            entry.text !== previous.text ||
-            entry.audios.length !== previous.audios.length
-          )
-        })
-
-      if (!hasDifference) {
-        return subtopic
-      }
-
       return {
         ...subtopic,
-        propositions: combinedEntries,
+        propositions: [...standardEntries, ...additionalEntries],
       }
     })
   }
@@ -904,17 +802,10 @@ export default function PropositionsApp() {
     }
 
     if (pendingExternalNavigation.title?.trim()) {
-      const nextTitle = pendingExternalNavigation.title
-      updateSubtopicById(themeId, subtopicId, (current) => {
-        if (current.title === nextTitle) {
-          return current
-        }
-
-        return {
-          ...current,
-          title: nextTitle,
-        }
-      })
+      updateSubtopicById(themeId, subtopicId, (current) => ({
+        ...current,
+        title: pendingExternalNavigation.title,
+      }))
     }
 
     ensureStandardPropositions(themeId, subtopicId)
@@ -1122,8 +1013,7 @@ export default function PropositionsApp() {
         throw new Error("El primer elemento debe incluir la propiedad 'texto'.")
       }
 
-      const timestamp = Date.now()
-      const newSubtopicId = `subtopic-${timestamp}`
+      const newSubtopicId = `subtopic-${Date.now()}`
 
       const propositions: Proposition[] | null = propositionEntries.length
         ? propositionEntries.map((entry: any, index: number) => {
@@ -1165,8 +1055,6 @@ export default function PropositionsApp() {
                 ? subtopicInfo.titulo
                 : subtopicInfo.texto,
             propositions,
-            createdAt: timestamp,
-            updatedAt: timestamp,
           },
         ],
       }))
@@ -1596,22 +1484,12 @@ export default function PropositionsApp() {
           legacySubtopics.map(async (subtopic: any, subtopicIndex: number) => {
             const fallbackSubtopicId = `legacy-${subtopicIndex}`
             const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
-            const fallbackTimestamp = Date.now()
-            const createdAt =
-              typeof subtopic.createdAt === "number"
-                ? subtopic.createdAt
-                : fallbackTimestamp
-            const updatedAt =
-              typeof subtopic.updatedAt === "number" ? subtopic.updatedAt : createdAt
 
             if (!subtopic.propositions) {
               return {
                 id: subtopicId,
                 text: subtopic.text ?? "",
                 title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-                createdAt,
-                updatedAt,
-                tags: normalizeTags(subtopic.tags),
                 propositions: null,
               }
             }
@@ -1636,9 +1514,6 @@ export default function PropositionsApp() {
               id: subtopicId,
               text: subtopic.text ?? "",
               title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-              createdAt,
-              updatedAt,
-              tags: normalizeTags(subtopic.tags),
               propositions: propositionsWithAudios,
             }
           }),
@@ -1661,22 +1536,12 @@ export default function PropositionsApp() {
               (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
                 const fallbackSubtopicId = `${themeId}-subtopic-${subtopicIndex}`
                 const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
-                const fallbackTimestamp = Date.now()
-                const createdAt =
-                  typeof subtopic.createdAt === "number"
-                    ? subtopic.createdAt
-                    : fallbackTimestamp
-                const updatedAt =
-                  typeof subtopic.updatedAt === "number" ? subtopic.updatedAt : createdAt
 
                 if (!subtopic.propositions) {
                   return {
                     id: subtopicId,
                     text: subtopic.text ?? "",
                     title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-                    createdAt,
-                    updatedAt,
-                    tags: normalizeTags(subtopic.tags),
                     propositions: null,
                   }
                 }
@@ -1701,9 +1566,6 @@ export default function PropositionsApp() {
                   id: subtopicId,
                   text: subtopic.text ?? "",
                   title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-                  createdAt,
-                  updatedAt,
-                  tags: normalizeTags(subtopic.tags),
                   propositions: propositionsWithAudios,
                 }
               }),
@@ -1777,13 +1639,6 @@ export default function PropositionsApp() {
                   subtopic?.id,
                   `${themeId}-subtopic-${subIndex}`,
                 )
-                const fallbackTimestamp = Date.now()
-                const createdAt =
-                  typeof subtopic?.createdAt === "number"
-                    ? subtopic.createdAt
-                    : fallbackTimestamp
-                const updatedAt =
-                  typeof subtopic?.updatedAt === "number" ? subtopic.updatedAt : createdAt
                 const propositionsRaw = subtopic?.propositions as any[] | null
 
                 if (!propositionsRaw) {
@@ -1791,8 +1646,6 @@ export default function PropositionsApp() {
                     id: subtopicId,
                     text: subtopic?.text ?? "",
                     title: typeof subtopic?.title === "string" ? subtopic.title : undefined,
-                    createdAt,
-                    updatedAt,
                     propositions: null,
                   }
                 }
@@ -1835,8 +1688,6 @@ export default function PropositionsApp() {
                   id: subtopicId,
                   text: subtopic?.text ?? "",
                   title: typeof subtopic?.title === "string" ? subtopic.title : undefined,
-                  createdAt,
-                  updatedAt,
                   propositions,
                 }
               }),
@@ -1891,22 +1742,12 @@ export default function PropositionsApp() {
           legacyData.map(async (subtopic: any, subtopicIndex: number) => {
             const fallbackSubtopicId = `legacy-${subtopicIndex}`
             const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
-            const fallbackTimestamp = Date.now()
-            const createdAt =
-              typeof subtopic.createdAt === "number"
-                ? subtopic.createdAt
-                : fallbackTimestamp
-            const updatedAt =
-              typeof subtopic.updatedAt === "number" ? subtopic.updatedAt : createdAt
 
             if (!subtopic.propositions) {
               return {
                 id: subtopicId,
                 text: subtopic.text ?? "",
                 title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-                createdAt,
-                updatedAt,
-                tags: normalizeTags(subtopic.tags),
                 propositions: null,
               }
             }
@@ -1941,9 +1782,6 @@ export default function PropositionsApp() {
               id: subtopicId,
               text: subtopic.text ?? "",
               title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-              createdAt,
-              updatedAt,
-              tags: normalizeTags(subtopic.tags),
               propositions: propositionsWithAudios,
             }
           }),
@@ -1977,22 +1815,12 @@ export default function PropositionsApp() {
             (theme.subtopics || []).map(async (subtopic: any, subtopicIndex: number) => {
               const fallbackSubtopicId = `${themeId}-subtopic-${subtopicIndex}`
               const subtopicId = ensureStringId(subtopic.id, fallbackSubtopicId)
-              const fallbackTimestamp = Date.now()
-              const createdAt =
-                typeof subtopic.createdAt === "number"
-                  ? subtopic.createdAt
-                  : fallbackTimestamp
-              const updatedAt =
-                typeof subtopic.updatedAt === "number" ? subtopic.updatedAt : createdAt
 
               if (!subtopic.propositions) {
                 return {
                   id: subtopicId,
                   text: subtopic.text ?? "",
                   title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-                  createdAt,
-                  updatedAt,
-                  tags: normalizeTags(subtopic.tags),
                   propositions: null,
                 }
               }
@@ -2027,9 +1855,6 @@ export default function PropositionsApp() {
                 id: subtopicId,
                 text: subtopic.text ?? "",
                 title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-                createdAt,
-                updatedAt,
-                tags: normalizeTags(subtopic.tags),
                 propositions: propositionsWithAudios,
               }
             }),
@@ -2097,7 +1922,6 @@ export default function PropositionsApp() {
             id: subtopic.id,
             text: subtopic.text,
             title: typeof subtopic.title === "string" ? subtopic.title : undefined,
-            tags: [...subtopic.tags],
             propositions: subtopic.propositions
               ? subtopic.propositions.map((prop) => ({
                   id: prop.id,
@@ -2263,15 +2087,11 @@ export default function PropositionsApp() {
   const addSubtopic = () => {
     if (!currentThemeId) return
 
-    const timestamp = Date.now()
     const newSubtopic: Subtopic = {
-      id: timestamp.toString(),
+      id: Date.now().toString(),
       text: "",
       propositions: null,
       title: "",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      tags: [],
     }
 
     updateThemeById(currentThemeId, (theme) => ({
@@ -2283,16 +2103,10 @@ export default function PropositionsApp() {
   const updateSubtopicTitle = (id: string, title: string) => {
     if (!currentThemeId) return
 
-    updateSubtopicById(currentThemeId, id, (subtopic) => {
-      if (subtopic.title === title) {
-        return subtopic
-      }
-
-      return {
-        ...subtopic,
-        title,
-      }
-    })
+    updateSubtopicById(currentThemeId, id, (subtopic) => ({
+      ...subtopic,
+      title,
+    }))
   }
 
   const openSubtopicDetail = (subtopicId: string) => {
@@ -2888,25 +2702,6 @@ export default function PropositionsApp() {
             </div>
           </div>
 
-          {subtopics.length > 0 && (
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Ordenado de más reciente a más antiguo
-              </span>
-              <div className="relative w-full md:max-w-xs">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  type="search"
-                  value={subtopicSearchTerm}
-                  onChange={(e) => setSubtopicSearchTerm(e.target.value)}
-                  placeholder="Buscar subtema"
-                  aria-label="Buscar subtema"
-                  className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                />
-              </div>
-            </div>
-          )}
-
           {isLoadingData ? (
             <Card className="p-12 text-center">
               <p className="text-muted-foreground">Cargando datos...</p>
@@ -2919,76 +2714,69 @@ export default function PropositionsApp() {
             </Card>
           ) : (
             <Card className="p-6 space-y-4">
-              {filteredSubtopics.length === 0 ? (
-                <div className="py-6 text-center text-sm text-muted-foreground">
-                  No se encontraron subtemas con ese nombre.
-                </div>
-              ) : (
-                filteredSubtopics.map((subtopic) => {
-                  const isSelected =
-                    focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
-                  const normalizedSubtopicId = normalizeStringId(subtopic.id)
-                  const linkStatus =
-                    subtopicLinkStatus[normalizedSubtopicId ?? subtopic.id] ?? "idle"
-                  return (
-                    <div
-                      key={subtopic.id}
-                      className={`relative flex items-center gap-4 rounded-lg p-2 pr-12 transition ${
-                        isSelected ? "bg-primary/10" : "hover:bg-muted/40"
-                      }`}
-                      onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                      onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                      tabIndex={0}
-                    >
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          value={subtopic.title ?? ""}
-                          onChange={(e) => updateSubtopicTitle(subtopic.id, e.target.value)}
-                          onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
-                          placeholder="Nombre del subtema (opcional)"
-                          className="w-full px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <Button
-                          onClick={() => openSubtopicDetail(subtopic.id)}
-                          disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
-                          className="whitespace-nowrap"
-                        >
-                          Ver subtema
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleCopySubtopicLink(subtopic)}
-                          title="Copiar enlace para compartir"
-                        >
-                          {linkStatus === "success" ? (
-                            <Check className="w-5 h-5" />
-                          ) : linkStatus === "error" ? (
-                            <AlertCircle className="w-5 h-5" />
-                          ) : (
-                            <Share2 className="w-5 h-5" />
-                          )}
-                          <span className="sr-only">Copiar enlace para compartir</span>
-                        </Button>
-                      </div>
+              {subtopics.map((subtopic) => {
+                const isSelected = focusedItem?.scope === "subtopic" && focusedItem.id === subtopic.id
+                const normalizedSubtopicId = normalizeStringId(subtopic.id)
+                const linkStatus =
+                  subtopicLinkStatus[normalizedSubtopicId ?? subtopic.id] ?? "idle"
+                return (
+                  <div
+                    key={subtopic.id}
+                    className={`relative flex items-center gap-4 rounded-lg p-2 pr-12 transition ${
+                      isSelected ? "bg-primary/10" : "hover:bg-muted/40"
+                    }`}
+                    onMouseEnter={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                    onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                    tabIndex={0}
+                  >
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={subtopic.title ?? ""}
+                        onChange={(e) => updateSubtopicTitle(subtopic.id, e.target.value)}
+                        onFocus={() => setFocusedItem({ scope: "subtopic", id: subtopic.id })}
+                        placeholder="Nombre del subtema (opcional)"
+                        className="w-full px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-transparent focus:outline-none border-none"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button
+                        onClick={() => openSubtopicDetail(subtopic.id)}
+                        disabled={!subtopic.text.trim() || isLoadingData || isGenerationBusy}
+                        className="whitespace-nowrap"
+                      >
+                        Ver subtema
+                      </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
-                        onClick={() => deleteSubtopic(subtopic.id)}
-                        className="absolute top-2 right-2 h-7 px-2"
-                        title="Eliminar subtema"
+                        size="icon"
+                        onClick={() => handleCopySubtopicLink(subtopic)}
+                        title="Copiar enlace para compartir"
                       >
-                        X
-                        <span className="sr-only">Eliminar subtema</span>
+                        {linkStatus === "success" ? (
+                          <Check className="w-5 h-5" />
+                        ) : linkStatus === "error" ? (
+                          <AlertCircle className="w-5 h-5" />
+                        ) : (
+                          <Share2 className="w-5 h-5" />
+                        )}
+                        <span className="sr-only">Copiar enlace para compartir</span>
                       </Button>
                     </div>
-                  )
-                })
-              )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => deleteSubtopic(subtopic.id)}
+                      className="absolute top-2 right-2 h-7 px-2"
+                      title="Eliminar subtema"
+                    >
+                      X
+                      <span className="sr-only">Eliminar subtema</span>
+                    </Button>
+                  </div>
+                )
+              })}
             </Card>
           )}
           <p className="text-xs text-muted-foreground text-center">

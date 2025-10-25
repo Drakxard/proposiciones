@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { Loader2, XCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -22,11 +22,6 @@ const CreateSubtopicPage = () => {
 
   const params = useParams<{ payload: string }>()
   const payload = params?.payload ?? ""
-  const searchParams = useSearchParams()
-  const tagParams = useMemo(
-    () => (searchParams ? searchParams.getAll("tag") : []),
-    [searchParams],
-  )
   const router = useRouter()
 
   const propositionUrl = useMemo(() => {
@@ -37,7 +32,7 @@ const CreateSubtopicPage = () => {
   useEffect(() => {
     console.log("[nuevaproposicion] Received payload", payload)
 
-    const parsed = parseExternalSubtopicPayload(payload, tagParams)
+    const parsed = parseExternalSubtopicPayload(payload)
 
     if (!parsed) {
       console.error("[nuevaproposicion] Could not parse external payload")
@@ -94,7 +89,7 @@ const CreateSubtopicPage = () => {
     return () => {
       cancelled = true
     }
-  }, [payload, router, tagParams])
+  }, [payload, router])
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-10 text-center">

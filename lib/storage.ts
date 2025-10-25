@@ -16,9 +16,6 @@ export type StoredSubtopic = {
   text: string
   propositions: StoredProposition[] | null
   title?: string
-  createdAt?: number
-  updatedAt?: number
-  tags?: string[] | null
 }
 
 export type StoredTheme = {
@@ -50,7 +47,6 @@ interface PropositionsDB extends DBSchema {
       subtopics: {
         id: string
         text: string
-        tags?: string[] | null
         propositions:
           | {
               id: string

@@ -174,8 +174,6 @@ const applyImportToState = (
           ...subtopic,
           text: update.text,
           propositions: update.propositions,
-          createdAt: subtopic.createdAt ?? timestamp,
-          updatedAt: timestamp,
         }
       })
 
