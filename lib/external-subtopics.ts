@@ -15,6 +15,7 @@ export const PENDING_SUBTOPIC_STORAGE_KEY = "propositions-app:pending-open-subto
 export type ExternalSubtopicPayload = {
   id: string
   name: string
+  tags?: string[]
 }
 
 export const parseExternalSubtopicPayload = (
@@ -53,6 +54,38 @@ export const parseExternalSubtopicPayload = (
   return { id, name: sanitizedName }
 }
 
+const sanitizeTags = (input: string[] | undefined): string[] => {
+  if (!Array.isArray(input) || input.length === 0) {
+    return []
+  }
+
+  const seen = new Set<string>()
+  const sanitized: string[] = []
+
+  for (const tag of input) {
+    if (typeof tag !== "string") {
+      continue
+    }
+
+    const trimmed = tag.trim()
+
+    if (!trimmed) {
+      continue
+    }
+
+    const normalizedKey = trimmed.toLowerCase()
+
+    if (seen.has(normalizedKey)) {
+      continue
+    }
+
+    seen.add(normalizedKey)
+    sanitized.push(trimmed)
+  }
+
+  return sanitized
+}
+
 const cloneStoredProposition = (
   proposition: StoredProposition,
   subtopicId: string,
@@ -74,6 +107,9 @@ const cloneStoredSubtopic = (
     ...subtopic,
     id: subtopicId,
     title: subtopic.title,
+    createdAt: subtopic.createdAt,
+    updatedAt: subtopic.updatedAt,
+    tags: sanitizeTags(subtopic.tags),
     propositions: subtopic.propositions
       ? subtopic.propositions.map((proposition, propIndex) =>
           cloneStoredProposition(proposition, subtopicId, propIndex),
@@ -152,7 +188,17 @@ export const upsertExternalSubtopic = (
     const newTheme: StoredTheme = {
       id: EXTERNAL_THEME_ID,
       name: EXTERNAL_THEME_NAME,
-      subtopics: [{ id: payloadId, text: name, title: name, propositions: null }],
+      subtopics: [
+        {
+          id: payloadId,
+          text: name,
+          title: name,
+          propositions: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          tags: sanitizeTags(payload.tags),
+        },
+      ],
     }
 
     updatedThemes = [...currentThemes, newTheme]
@@ -179,6 +225,7 @@ export const upsertExternalSubtopic = (
                 audios: [...proposition.audios],
               }))
             : null,
+          tags: sanitizeTags(subtopic.tags),
         }
       })
       const existingSubtopicIndex = subtopics.findIndex(
@@ -186,9 +233,26 @@ export const upsertExternalSubtopic = (
       )
 
       if (existingSubtopicIndex === -1) {
-        subtopics.push({ id: payloadId, text: name, title: name, propositions: null })
+        subtopics.push({
+          id: payloadId,
+          text: name,
+          title: name,
+          propositions: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          tags: sanitizeTags(payload.tags),
+        })
       } else {
         const existing = subtopics[existingSubtopicIndex]
+        const existingTags = sanitizeTags(existing.tags)
+        const incomingTags = sanitizeTags(payload.tags)
+        const mergedTags = existingTags.length
+          ? existingTags.concat(
+              incomingTags.filter(
+                (tag) => !existingTags.some((existingTag) => existingTag.toLowerCase() === tag.toLowerCase()),
+              ),
+            )
+          : incomingTags
         const preservedTitle = existing.title?.trim().length
           ? existing.title
           : existing.text.trim().length
@@ -200,6 +264,9 @@ export const upsertExternalSubtopic = (
           ...existing,
           text: preservedText,
           title: preservedTitle,
+          createdAt: existing.createdAt ?? timestamp,
+          updatedAt: timestamp,
+          tags: mergedTags,
           propositions: existing.propositions
             ? existing.propositions.map((proposition, propIndex) => ({
                 ...proposition,
@@ -255,6 +322,7 @@ export const findSubtopicInAppState = (
               ...subtopic,
               id: subtopicId,
               title: subtopic.title,
+              tags: sanitizeTags(subtopic.tags),
               propositions: subtopic.propositions
                 ? subtopic.propositions.map((proposition, propIndex) => ({
                     ...proposition,
@@ -272,6 +340,7 @@ export const findSubtopicInAppState = (
                       ...subtopic,
                       id: subtopicId,
                       title: subtopic.title,
+                      tags: sanitizeTags(subtopic.tags),
                       propositions: subtopic.propositions
                         ? subtopic.propositions.map((proposition, propIndex) => ({
                             ...proposition,
