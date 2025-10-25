@@ -42,7 +42,7 @@ import {
   type StoredEra,
 } from "@/lib/storage"
 import { PENDING_SUBTOPIC_STORAGE_KEY } from "@/lib/external-subtopics"
-import { ensureStringId, normalizeStringId } from "@/lib/utils"
+import { ensureStringId, normalizeStringId, normalizeTags } from "@/lib/utils"
 import {
   isFileSystemSupported,
   requestDirectoryAccess,
@@ -77,6 +77,7 @@ interface Subtopic {
   title?: string
   createdAt: number
   updatedAt: number
+  tags: string[]
 }
 
 interface Theme {
@@ -109,6 +110,7 @@ const cloneThemes = (themes: Theme[]): Theme[] =>
     ...theme,
     subtopics: theme.subtopics.map((subtopic) => ({
       ...subtopic,
+      tags: [...subtopic.tags],
       propositions: subtopic.propositions
         ? subtopic.propositions.map((prop) => ({
             ...prop,
@@ -166,6 +168,7 @@ const DEFAULT_INITIAL_THEMES: Theme[] = [
         propositions: null,
         createdAt: defaultSubtopicTimestamp,
         updatedAt: defaultSubtopicTimestamp,
+        tags: [],
       },
     ],
   },
@@ -282,6 +285,7 @@ const normalizeStoredEra = (storedEra: StoredEra): Era => {
             title: subtopic.title ?? undefined,
             createdAt,
             updatedAt,
+            tags: normalizeTags(subtopic.tags),
             propositions: subtopic.propositions
               ? subtopic.propositions.map((prop, propIndex) => ({
                   id: ensureStringId(prop.id, `${subtopicId}-${propIndex}`),
@@ -649,8 +653,9 @@ export default function PropositionsApp() {
     return sortedSubtopics.filter((subtopic) => {
       const title = subtopic.title?.toLowerCase() ?? ""
       const text = subtopic.text?.toLowerCase() ?? ""
+      const tagMatches = subtopic.tags.some((tag) => tag.toLowerCase().includes(term))
 
-      return title.includes(term) || text.includes(term)
+      return title.includes(term) || text.includes(term) || tagMatches
     })
   }, [sortedSubtopics, subtopicSearchTerm])
   const currentSubtopic =
@@ -1606,6 +1611,7 @@ export default function PropositionsApp() {
                 title: typeof subtopic.title === "string" ? subtopic.title : undefined,
                 createdAt,
                 updatedAt,
+                tags: normalizeTags(subtopic.tags),
                 propositions: null,
               }
             }
@@ -1632,6 +1638,7 @@ export default function PropositionsApp() {
               title: typeof subtopic.title === "string" ? subtopic.title : undefined,
               createdAt,
               updatedAt,
+              tags: normalizeTags(subtopic.tags),
               propositions: propositionsWithAudios,
             }
           }),
@@ -1669,6 +1676,7 @@ export default function PropositionsApp() {
                     title: typeof subtopic.title === "string" ? subtopic.title : undefined,
                     createdAt,
                     updatedAt,
+                    tags: normalizeTags(subtopic.tags),
                     propositions: null,
                   }
                 }
@@ -1695,6 +1703,7 @@ export default function PropositionsApp() {
                   title: typeof subtopic.title === "string" ? subtopic.title : undefined,
                   createdAt,
                   updatedAt,
+                  tags: normalizeTags(subtopic.tags),
                   propositions: propositionsWithAudios,
                 }
               }),
@@ -1897,6 +1906,7 @@ export default function PropositionsApp() {
                 title: typeof subtopic.title === "string" ? subtopic.title : undefined,
                 createdAt,
                 updatedAt,
+                tags: normalizeTags(subtopic.tags),
                 propositions: null,
               }
             }
@@ -1933,6 +1943,7 @@ export default function PropositionsApp() {
               title: typeof subtopic.title === "string" ? subtopic.title : undefined,
               createdAt,
               updatedAt,
+              tags: normalizeTags(subtopic.tags),
               propositions: propositionsWithAudios,
             }
           }),
@@ -1981,6 +1992,7 @@ export default function PropositionsApp() {
                   title: typeof subtopic.title === "string" ? subtopic.title : undefined,
                   createdAt,
                   updatedAt,
+                  tags: normalizeTags(subtopic.tags),
                   propositions: null,
                 }
               }
@@ -2017,6 +2029,7 @@ export default function PropositionsApp() {
                 title: typeof subtopic.title === "string" ? subtopic.title : undefined,
                 createdAt,
                 updatedAt,
+                tags: normalizeTags(subtopic.tags),
                 propositions: propositionsWithAudios,
               }
             }),
@@ -2084,6 +2097,7 @@ export default function PropositionsApp() {
             id: subtopic.id,
             text: subtopic.text,
             title: typeof subtopic.title === "string" ? subtopic.title : undefined,
+            tags: [...subtopic.tags],
             propositions: subtopic.propositions
               ? subtopic.propositions.map((prop) => ({
                   id: prop.id,
@@ -2257,6 +2271,7 @@ export default function PropositionsApp() {
       title: "",
       createdAt: timestamp,
       updatedAt: timestamp,
+      tags: [],
     }
 
     updateThemeById(currentThemeId, (theme) => ({

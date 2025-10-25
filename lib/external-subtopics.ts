@@ -1,4 +1,4 @@
-import { ensureStringId, normalizeStringId } from "@/lib/utils"
+import { ensureStringId, normalizeStringId, normalizeTags } from "@/lib/utils"
 
 import type {
   StoredAppState,
@@ -15,10 +15,12 @@ export const PENDING_SUBTOPIC_STORAGE_KEY = "propositions-app:pending-open-subto
 export type ExternalSubtopicPayload = {
   id: string
   name: string
+  tags: string[]
 }
 
 export const parseExternalSubtopicPayload = (
   raw: string,
+  rawTags?: string[] | null,
 ): ExternalSubtopicPayload | null => {
   const decoded = decodeURIComponent(raw)
 
@@ -50,7 +52,9 @@ export const parseExternalSubtopicPayload = (
     return null
   }
 
-  return { id, name: sanitizedName }
+  const tags = normalizeTags(rawTags)
+
+  return { id, name: sanitizedName, tags }
 }
 
 const cloneStoredProposition = (
@@ -69,6 +73,7 @@ const cloneStoredSubtopic = (
   index: number,
 ): StoredSubtopic => {
   const subtopicId = ensureStringId(subtopic.id, `${themeId}-subtopic-${index}`)
+  const tags = normalizeTags(subtopic.tags)
 
   return {
     ...subtopic,
@@ -76,6 +81,7 @@ const cloneStoredSubtopic = (
     title: subtopic.title,
     createdAt: subtopic.createdAt,
     updatedAt: subtopic.updatedAt,
+    tags,
     propositions: subtopic.propositions
       ? subtopic.propositions.map((proposition, propIndex) =>
           cloneStoredProposition(proposition, subtopicId, propIndex),
@@ -142,6 +148,7 @@ export const upsertExternalSubtopic = (
   const timestamp = Date.now()
   const { name } = payload
   const payloadId = ensureStringId(payload.id, payload.id)
+  const payloadTags = normalizeTags(payload.tags)
 
   const currentThemes = state.currentEra.themes
   let existingThemeIndex = currentThemes.findIndex(
@@ -162,6 +169,7 @@ export const upsertExternalSubtopic = (
           propositions: null,
           createdAt: timestamp,
           updatedAt: timestamp,
+          tags: payloadTags,
         },
       ],
     }
@@ -178,11 +186,13 @@ export const upsertExternalSubtopic = (
           subtopic.id,
           `${EXTERNAL_THEME_ID}-subtopic-${subIndex}`,
         )
+        const normalizedTags = normalizeTags(subtopic.tags)
 
         return {
           ...subtopic,
           id: normalizedSubtopicId,
           title: subtopic.title,
+          tags: normalizedTags,
           propositions: subtopic.propositions
             ? subtopic.propositions.map((proposition, propIndex) => ({
                 ...proposition,
@@ -204,6 +214,7 @@ export const upsertExternalSubtopic = (
           propositions: null,
           createdAt: timestamp,
           updatedAt: timestamp,
+          tags: payloadTags,
         })
       } else {
         const existing = subtopics[existingSubtopicIndex]
@@ -214,12 +225,16 @@ export const upsertExternalSubtopic = (
             : name
         const preservedText = existing.text.trim().length ? existing.text : preservedTitle
 
+        const preservedTags =
+          payloadTags.length > 0 ? payloadTags : normalizeTags(existing.tags)
+
         subtopics[existingSubtopicIndex] = {
           ...existing,
           text: preservedText,
           title: preservedTitle,
           createdAt: existing.createdAt ?? timestamp,
           updatedAt: timestamp,
+          tags: preservedTags,
           propositions: existing.propositions
             ? existing.propositions.map((proposition, propIndex) => ({
                 ...proposition,
@@ -275,6 +290,7 @@ export const findSubtopicInAppState = (
               ...subtopic,
               id: subtopicId,
               title: subtopic.title,
+              tags: normalizeTags(subtopic.tags),
               propositions: subtopic.propositions
                 ? subtopic.propositions.map((proposition, propIndex) => ({
                     ...proposition,
@@ -292,6 +308,7 @@ export const findSubtopicInAppState = (
                       ...subtopic,
                       id: subtopicId,
                       title: subtopic.title,
+                      tags: normalizeTags(subtopic.tags),
                       propositions: subtopic.propositions
                         ? subtopic.propositions.map((proposition, propIndex) => ({
                             ...proposition,
