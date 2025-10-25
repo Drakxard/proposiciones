@@ -2516,7 +2516,42 @@ export default function PropositionsApp() {
       ""
 
     if (target.type === "condicion") {
-      alert("Edita la condición directamente en el campo principal.")
+      if (typeof window === "undefined") {
+        return
+      }
+
+      const editedCondition = window.prompt(
+        "Edita la condición como quieras que se guarde:",
+        conditionText,
+      )
+
+      if (editedCondition === null) {
+        return
+      }
+
+      const normalizedCondition = editedCondition.trim()
+
+      if (!normalizedCondition) {
+        alert("La condición no puede quedar vacía.")
+        return
+      }
+
+      updateSubtopicById(currentThemeId, currentSubtopicId, (subtopic) => {
+        const updatedPropositions = subtopic.propositions
+          ? subtopic.propositions.map((prop) =>
+              prop.type === "condicion" ? { ...prop, text: normalizedCondition } : prop,
+            )
+          : null
+
+        return {
+          ...subtopic,
+          text: normalizedCondition,
+          propositions: updatedPropositions,
+        }
+      })
+
+      setRewritePreview(null)
+
       return
     }
 
