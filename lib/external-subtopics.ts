@@ -74,6 +74,8 @@ const cloneStoredSubtopic = (
     ...subtopic,
     id: subtopicId,
     title: subtopic.title,
+    createdAt: subtopic.createdAt,
+    updatedAt: subtopic.updatedAt,
     propositions: subtopic.propositions
       ? subtopic.propositions.map((proposition, propIndex) =>
           cloneStoredProposition(proposition, subtopicId, propIndex),
@@ -152,7 +154,16 @@ export const upsertExternalSubtopic = (
     const newTheme: StoredTheme = {
       id: EXTERNAL_THEME_ID,
       name: EXTERNAL_THEME_NAME,
-      subtopics: [{ id: payloadId, text: name, title: name, propositions: null }],
+      subtopics: [
+        {
+          id: payloadId,
+          text: name,
+          title: name,
+          propositions: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ],
     }
 
     updatedThemes = [...currentThemes, newTheme]
@@ -186,7 +197,14 @@ export const upsertExternalSubtopic = (
       )
 
       if (existingSubtopicIndex === -1) {
-        subtopics.push({ id: payloadId, text: name, title: name, propositions: null })
+        subtopics.push({
+          id: payloadId,
+          text: name,
+          title: name,
+          propositions: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })
       } else {
         const existing = subtopics[existingSubtopicIndex]
         const preservedTitle = existing.title?.trim().length
@@ -200,6 +218,8 @@ export const upsertExternalSubtopic = (
           ...existing,
           text: preservedText,
           title: preservedTitle,
+          createdAt: existing.createdAt ?? timestamp,
+          updatedAt: timestamp,
           propositions: existing.propositions
             ? existing.propositions.map((proposition, propIndex) => ({
                 ...proposition,

@@ -16,6 +16,8 @@ export type StoredSubtopic = {
   text: string
   propositions: StoredProposition[] | null
   title?: string
+  createdAt?: number
+  updatedAt?: number
 }
 
 export type StoredTheme = {
