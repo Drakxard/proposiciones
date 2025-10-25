@@ -1,7 +1,5 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb"
-
-type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
-type PropositionKind = PropositionType | "custom"
+export type PropositionType = "condicion" | "reciproco" | "inverso" | "contrareciproco"
+export type PropositionKind = PropositionType | "custom"
 
 export type StoredProposition = {
   id: string
@@ -41,169 +39,184 @@ export type StoredAppState = {
   eraHistory: StoredEra[]
 }
 
-interface PropositionsDB extends DBSchema {
-  subtopics: {
-    key: string
-    value: {
-      id: string
-      name: string
-      subtopics: {
-        id: string
-        text: string
-        tags?: string[]
-        propositions:
-          | {
-              id: string
-              type: PropositionKind
-              label: string
-              text: string
-            }[]
-          | null
-      }[]
-    }
-  }
-  audios: {
-    key: string // Format: subtopicId-propIndex-audioIndex
-    value: {
-      id: string
-      subtopicId: string
-      propIndex: number
-      audioIndex: number
-      blob: Blob
-      timestamp: number
-    }
-    indexes: { "by-subtopic": string }
-  }
-  settings: {
-    key: string
-    value: {
-      groqModel: string
-      groqPrompt: string
-    }
-  }
-  appState: {
-    key: string
-    value: StoredAppState
-  }
+type StorageResponse<T> = {
+  data: T
 }
 
-let dbPromise: Promise<IDBPDatabase<PropositionsDB>> | null = null
-
-function getDB() {
-  if (!dbPromise) {
-    dbPromise = openDB<PropositionsDB>("propositions-app", 2, {
-      upgrade(db, oldVersion) {
-        // Create subtopics store
-        if (oldVersion < 1 && !db.objectStoreNames.contains("subtopics")) {
-          db.createObjectStore("subtopics", { keyPath: "id" })
-        }
-
-        // Create audios store with index
-        if (oldVersion < 1 && !db.objectStoreNames.contains("audios")) {
-          const audioStore = db.createObjectStore("audios", { keyPath: "id" })
-          audioStore.createIndex("by-subtopic", "subtopicId")
-        }
-
-        // Create settings store
-        if (oldVersion < 1 && !db.objectStoreNames.contains("settings")) {
-          db.createObjectStore("settings")
-        }
-
-        if (oldVersion < 2 && !db.objectStoreNames.contains("appState")) {
-          db.createObjectStore("appState")
-        }
-      },
-    })
-  }
-  return dbPromise
+type AudioResponse = {
+  id: string
+  subtopicId: string
+  propIndex: number
+  audioIndex: number
+  mimeType: string | null
+  blobBase64: string
+  timestamp: number
 }
 
-// Themes operations (stored in the historical "subtopics" store for backwards compatibility)
+type AudioFetchResponse = {
+  audios: AudioResponse[]
+}
+
+const JSON_HEADERS = { "Content-Type": "application/json" }
+
+const AUDIO_ENDPOINT = "/api/storage/audios"
+const THEMES_ENDPOINT = "/api/storage/themes"
+const SETTINGS_ENDPOINT = "/api/storage/settings"
+const APP_STATE_ENDPOINT = "/api/storage/app-state"
+const CLEAR_ENDPOINT = "/api/storage/clear"
+
+const DEFAULT_AUDIO_MIME_TYPE = "audio/webm"
+
+const encodeBase64 = (data: Uint8Array) => {
+  const globalObject: any = typeof globalThis !== "undefined" ? globalThis : {}
+
+  if (globalObject.Buffer) {
+    return globalObject.Buffer.from(data).toString("base64")
+  }
+
+  if (typeof globalObject.btoa === "function") {
+    let binary = ""
+    for (let i = 0; i < data.length; i++) {
+      binary += String.fromCharCode(data[i])
+    }
+    return globalObject.btoa(binary)
+  }
+
+  throw new Error("Base64 encoding is not supported in this environment")
+}
+
+const decodeBase64 = (base64: string): Uint8Array => {
+  const globalObject: any = typeof globalThis !== "undefined" ? globalThis : {}
+
+  if (globalObject.Buffer) {
+    return new Uint8Array(globalObject.Buffer.from(base64, "base64"))
+  }
+
+  if (typeof globalObject.atob === "function") {
+    const binary = globalObject.atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return bytes
+  }
+
+  throw new Error("Base64 decoding is not supported in this environment")
+}
+
+const toBlob = (data: Uint8Array, mimeType?: string | null) => {
+  return new Blob([data], { type: mimeType ?? DEFAULT_AUDIO_MIME_TYPE })
+}
+
+async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(url, options)
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Request to ${url} failed with status ${response.status}: ${text}`)
+  }
+  if (response.status === 204) {
+    return undefined as unknown as T
+  }
+  return (await response.json()) as T
+}
+
 export async function saveThemes(themes: any[]) {
-  const db = await getDB()
-  const tx = db.transaction("subtopics", "readwrite")
-
-  // Clear existing and save new
-  await tx.store.clear()
-  for (const theme of themes) {
-    await tx.store.put(theme)
-  }
-  await tx.done
-}
-
-export async function loadThemes() {
-  const db = await getDB()
-  return await db.getAll("subtopics")
-}
-
-// Audio operations
-export async function saveAudio(subtopicId: string, propIndex: number, audioIndex: number, blob: Blob) {
-  const db = await getDB()
-  const id = `${subtopicId}-${propIndex}-${audioIndex}`
-
-  await db.put("audios", {
-    id,
-    subtopicId,
-    propIndex,
-    audioIndex,
-    blob,
-    timestamp: Date.now(),
+  await requestJson<void>(THEMES_ENDPOINT, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ data: themes }),
   })
 }
 
-export async function loadAudios(subtopicId: string) {
-  const db = await getDB()
-  const tx = db.transaction("audios", "readonly")
-  const index = tx.store.index("by-subtopic")
-  const audios = await index.getAll(subtopicId)
+export async function loadThemes() {
+  const response = await requestJson<StorageResponse<any[]>>(THEMES_ENDPOINT)
+  return response.data ?? []
+}
 
-  // Group by propIndex and audioIndex
+export async function saveAudio(
+  subtopicId: string,
+  propIndex: number,
+  audioIndex: number,
+  blob: Blob,
+) {
+  const arrayBuffer = await blob.arrayBuffer()
+  const uint8Array = new Uint8Array(arrayBuffer)
+  const blobBase64 = encodeBase64(uint8Array)
+
+  await requestJson<void>(AUDIO_ENDPOINT, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      subtopicId,
+      propIndex,
+      audioIndex,
+      blobBase64,
+      mimeType: blob.type || DEFAULT_AUDIO_MIME_TYPE,
+    }),
+  })
+}
+
+const mapAudioResponseToBlob = (audio: AudioResponse) => {
+  const data = decodeBase64(audio.blobBase64)
+  return {
+    id: audio.id,
+    subtopicId: audio.subtopicId,
+    propIndex: audio.propIndex,
+    audioIndex: audio.audioIndex,
+    blob: toBlob(data, audio.mimeType),
+    timestamp: audio.timestamp,
+  }
+}
+
+export async function loadAudios(subtopicId: string) {
+  const url = `${AUDIO_ENDPOINT}?subtopicId=${encodeURIComponent(subtopicId)}`
+  const response = await requestJson<AudioFetchResponse>(url)
   const grouped: Record<number, Blob[]> = {}
 
-  for (const audio of audios) {
-    if (!grouped[audio.propIndex]) {
-      grouped[audio.propIndex] = []
+  for (const audio of response.audios ?? []) {
+    const mapped = mapAudioResponseToBlob(audio)
+    if (!grouped[mapped.propIndex]) {
+      grouped[mapped.propIndex] = []
     }
-    grouped[audio.propIndex][audio.audioIndex] = audio.blob
+    grouped[mapped.propIndex][mapped.audioIndex] = mapped.blob
   }
 
   return grouped
 }
 
 export async function loadAllAudios() {
-  const db = await getDB()
-  return await db.getAll("audios")
+  const response = await requestJson<AudioFetchResponse>(AUDIO_ENDPOINT)
+  return (response.audios ?? []).map(mapAudioResponseToBlob)
 }
 
-// Settings operations
 export async function saveSettings(settings: { groqModel: string; groqPrompt: string }) {
-  const db = await getDB()
-  await db.put("settings", settings, "config")
+  await requestJson<void>(SETTINGS_ENDPOINT, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ data: settings }),
+  })
 }
 
 export async function loadSettings() {
-  const db = await getDB()
-  return await db.get("settings", "config")
+  const response = await requestJson<StorageResponse<{ groqModel: string; groqPrompt: string } | null>>(SETTINGS_ENDPOINT)
+  return response.data ?? null
 }
 
-// App state operations
 export async function saveAppState(state: StoredAppState) {
-  const db = await getDB()
-  await db.put("appState", state, "main")
+  await requestJson<void>(APP_STATE_ENDPOINT, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ data: state }),
+  })
 }
 
 export async function loadAppState() {
-  const db = await getDB()
-  return await db.get("appState", "main")
+  const response = await requestJson<StorageResponse<StoredAppState | null>>(APP_STATE_ENDPOINT)
+  return response.data ?? null
 }
 
-// Clear all data
 export async function clearAllData() {
-  const db = await getDB()
-  const tx = db.transaction(["subtopics", "audios", "settings", "appState"], "readwrite")
-  await tx.objectStore("subtopics").clear()
-  await tx.objectStore("audios").clear()
-  await tx.objectStore("settings").clear()
-  await tx.objectStore("appState").clear()
-  await tx.done
+  await requestJson<void>(CLEAR_ENDPOINT, {
+    method: "POST",
+  })
 }
