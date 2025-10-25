@@ -25,35 +25,3 @@ export function normalizeStringId(value: unknown): string | null {
 export function ensureStringId(value: unknown, fallback: string): string {
   return normalizeStringId(value) ?? fallback
 }
-
-export function normalizeTags(tags: Iterable<unknown> | null | undefined): string[] {
-  if (!tags) {
-    return []
-  }
-
-  const normalized: string[] = []
-  const seen = new Set<string>()
-
-  for (const rawTag of tags) {
-    if (typeof rawTag !== "string") {
-      continue
-    }
-
-    const trimmed = rawTag.trim()
-
-    if (!trimmed) {
-      continue
-    }
-
-    const dedupeKey = trimmed.toLowerCase()
-
-    if (seen.has(dedupeKey)) {
-      continue
-    }
-
-    seen.add(dedupeKey)
-    normalized.push(trimmed)
-  }
-
-  return normalized
-}
