@@ -4,6 +4,13 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   Play,
   Mic,
   Headphones,
@@ -18,6 +25,7 @@ import {
   Check,
   AlertCircle,
   Share2,
+  Info,
 } from "lucide-react"
 import { SettingsModal } from "@/components/settings-modal"
 import { ErasModal, type EraSummary } from "@/components/eras-modal"
@@ -188,6 +196,10 @@ const STANDARD_PROPOSITION_TYPES: PropositionType[] = [
   "contrareciproco",
 ]
 
+const KATEX_VERSION = "0.16.9"
+const KATEX_CSS_URL = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/katex.min.css`
+const KATEX_SCRIPT_URL = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/katex.min.js`
+
 const createVariantPromptDefaults = (): Record<PropositionVariant, string> => ({
   reciproco: GROQ_DEFAULT_VARIANT_PROMPTS.reciproco,
   inverso: GROQ_DEFAULT_VARIANT_PROMPTS.inverso,
@@ -306,6 +318,7 @@ export default function PropositionsApp() {
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [showErasModal, setShowErasModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const [showLatexInfo, setShowLatexInfo] = useState(false)
   const [importInitialText, setImportInitialText] = useState("")
   const [importClipboardError, setImportClipboardError] = useState<string | null>(null)
   const [isLoadingData, setIsLoadingData] = useState(true)
@@ -1112,6 +1125,30 @@ export default function PropositionsApp() {
         onOpenChange={handleImportModalOpenChange}
         onSubmit={handleImportModalSubmit}
       />
+      <Dialog open={showLatexInfo} onOpenChange={setShowLatexInfo}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Información de fórmulas</DialogTitle>
+            <DialogDescription>
+              Las fórmulas matemáticas se renderizan con KaTeX v{KATEX_VERSION} desde jsDelivr.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              Para escribir matemáticas usa <code>$...$</code> para fórmulas en línea o <code>$$...$$</code> para bloque completo.
+            </p>
+            <div className="space-y-1">
+              <p className="font-medium text-foreground">Recursos cargados:</p>
+              <p>
+                CSS: <code className="break-all">{KATEX_CSS_URL}</code>
+              </p>
+              <p>
+                Script: <code className="break-all">{KATEX_SCRIPT_URL}</code>
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 
@@ -1209,6 +1246,19 @@ export default function PropositionsApp() {
     }
   }
 
+  const LatexInfoButton = () => (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setShowLatexInfo(true)}
+      className="hover:bg-primary/10"
+      title="Información sobre fórmulas"
+    >
+      <Info className="w-5 h-5" />
+      <span className="sr-only">Mostrar información de KaTeX</span>
+    </Button>
+  )
+
   const MathText = ({ text }: { text: string }) => {
     const [isKatexReady, setIsKatexReady] = useState(
       typeof window !== "undefined" && Boolean((window as any).katex),
@@ -1269,7 +1319,7 @@ export default function PropositionsApp() {
         const link = document.createElement("link")
         link.id = "katex-styles"
         link.rel = "stylesheet"
-        link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"
+        link.href = KATEX_CSS_URL
         document.head.appendChild(link)
       }
 
@@ -1286,7 +1336,7 @@ export default function PropositionsApp() {
 
       const script = document.createElement("script")
       script.id = "katex-script"
-      script.src = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"
+      script.src = KATEX_SCRIPT_URL
       script.async = true
       script.onload = () => setIsKatexReady(true)
       script.onerror = () => console.error("No se pudo cargar KaTeX")
@@ -2691,6 +2741,7 @@ export default function PropositionsApp() {
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes">
                 <Settings className="w-5 h-5" />
               </Button>
+              <LatexInfoButton />
             </div>
           </div>
 
@@ -2778,6 +2829,7 @@ export default function PropositionsApp() {
               <Button variant="ghost" size="icon" onClick={() => setShowSettingsModal(true)} title="Ajustes (g)">
                 <Settings className="w-5 h-5" />
               </Button>
+              <LatexInfoButton />
             </div>
           </div>
 
@@ -2870,16 +2922,22 @@ export default function PropositionsApp() {
 
   if (showRelaxAnimation) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
-        <div className="text-center space-y-6">
-          <div className="relative w-32 h-32 mx-auto">
-            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-400 to-purple-400 animate-ping opacity-75"></div>
-            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400 to-pink-400 animate-pulse"></div>
+      <>
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
+          <div className="fixed top-4 right-4">
+            <LatexInfoButton />
           </div>
-          <p className="text-2xl font-medium text-foreground">Excelente trabajo 🌟</p>
-          <p className="text-muted-foreground">Descansa y vuelve cuando estés listo</p>
+          <div className="text-center space-y-6">
+            <div className="relative w-32 h-32 mx-auto">
+              <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-400 to-purple-400 animate-ping opacity-75"></div>
+              <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400 to-pink-400 animate-pulse"></div>
+            </div>
+            <p className="text-2xl font-medium text-foreground">Excelente trabajo 🌟</p>
+            <p className="text-muted-foreground">Descansa y vuelve cuando estés listo</p>
+          </div>
         </div>
-      </div>
+        {sharedModals}
+      </>
     )
   }
 
@@ -2909,6 +2967,9 @@ export default function PropositionsApp() {
           >
             <Home className="w-6 h-6" />
           </Button>
+        </div>
+        <div className="fixed top-4 right-4">
+          <LatexInfoButton />
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
@@ -3112,20 +3173,21 @@ export default function PropositionsApp() {
   )
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-8">
-      <div className="fixed top-4 left-4 flex gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => {
-            setPendingPracticeIndex(null)
-            setViewState("overview")
-          }}
-          className="hover:bg-primary/10"
-          title="Volver al subtema"
-        >
-          <ArrowLeft className="w-6 h-6" />
-        </Button>
+    <>
+      <div className="min-h-screen bg-background flex items-center justify-center p-8">
+        <div className="fixed top-4 left-4 flex gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setPendingPracticeIndex(null)
+              setViewState("overview")
+            }}
+            className="hover:bg-primary/10"
+            title="Volver al subtema"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -3135,6 +3197,9 @@ export default function PropositionsApp() {
         >
           <Home className="w-6 h-6" />
         </Button>
+      </div>
+      <div className="fixed top-4 right-4">
+        <LatexInfoButton />
       </div>
 
       <div className="max-w-4xl w-full space-y-8">
@@ -3349,6 +3414,7 @@ export default function PropositionsApp() {
           ))}
         </div>
       </div>
-    </div>
+      {sharedModals}
+    </>
   )
 }
